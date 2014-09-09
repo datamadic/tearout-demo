@@ -1,0 +1,24 @@
+.tearout-container {
+	border: 1px solid black;
+	padding: 5px;
+	width: 210px;
+	height: 210px;
+	margin:5px;
+	/*float: left;*/
+}
+
+.tearout {
+	height: 100%;
+	width: 100%;
+}
+
+.steelblue {
+	background-color:  steelblue;
+}
+.indianred {
+	background-color:  indianred;
+}
+.gold {
+	background-color:  gold;
+}
+
