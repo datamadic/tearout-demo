@@ -1,0 +1,23 @@
+{
+    "env": "TearoutCache",
+    "desktop_core_url": "http://local:9000/offline/core.html",
+    "desktop_controller_url": "http://local:9000/offline/controller/index.html",
+    "devtools_port": 9090,
+    "websocket_port": 9696,
+    "startup_app": {
+        "name": "Tearout-offline",
+        "uuid": "tearout-main-offline",
+        "url": "http://local:9000/index.html",
+        "autoShow": true
+    },
+    "runtime": {
+        "arguments": "",
+        "version" : "latest"
+    },
+    "shortcut": {
+        "company": "OpenFin",
+        "description": "Tearout Example",
+        "name": "openfin-tearout-offline",
+        "icon": "steeeeeeeeve"
+    }
+}

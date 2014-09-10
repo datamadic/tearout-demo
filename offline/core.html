@@ -1,0 +1,3515 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>OpenFin Desktop Core</title>
+<script type="text/javascript" language="javascript">
+
+
+var fin = fin || {};
+
+fin.desktop = fin.desktop || {};
+
+(function () {
+    // Modified by deploy script
+    var openFinVersion = '2.0.7';
+    var openFinPathVersion = openFinVersion + '/';
+    var applicationToken = undefined;
+    var websocketPort = undefined;
+    var windowId = undefined;
+    var applicationUuid = undefined;
+    var desktopControllerUrl = undefined;
+	var websocketProtocol = "ws";
+    var socket;
+
+    function deepObjCopy (dupeObj) {
+        var retObj;
+        if (typeof(dupeObj) == 'object') {
+            if (Array.isArray(dupeObj))
+                retObj = [];
+            else
+                retObj = {};
+            for (var objInd in dupeObj) {
+                if (typeof(dupeObj[objInd]) == 'object') {
+                    retObj[objInd] = deepObjCopy(dupeObj[objInd]);
+                } else if (typeof(dupeObj[objInd]) == 'string') {
+                    retObj[objInd] = dupeObj[objInd];
+                } else if (typeof(dupeObj[objInd]) == 'number') {
+                    retObj[objInd] = dupeObj[objInd];
+                } else if (typeof(dupeObj[objInd]) == 'boolean') {
+                    ((dupeObj[objInd]) ? retObj[objInd] = true : retObj[objInd] = false);
+                } else if (typeof (dupeObj[objInd]) == 'function') {
+                    retObj[objInd] = dupeObj[objInd];
+                }
+            }
+        } else {
+            retObj = dupeObj;
+        }
+        return retObj;
+    }
+
+    if (chrome && chrome.desktop && chrome.desktop.getDetails) {
+        console.log("Retrieving desktop details");
+        chrome.desktop.getDetails(function (token, name, app_uuid, port, ssl) {
+            applicationUuid = app_uuid;
+            window.name = name;
+            windowId = name;
+            applicationToken = token;
+            websocketPort = port;
+            if (ssl) {
+              console.log("using ssl protocol wss");
+              websocketProtocol = "wss";
+            }
+
+            socket = new WebSocket(websocketProtocol + '://127.0.0.1:' + (websocketPort ? websocketPort : '9696'));
+            setWsHandlers(socket);
+        });
+    } else {
+        socket = new WebSocket(websocketProtocol + '://127.0.0.1:' + (websocketPort ? websocketPort : '9696'));
+        setWsHandlers(socket);
+    }
+
+    var isConnected = false;
+    var isStarted = false;
+
+    function setWsHandlers(socket) {
+
+        socket.onopen = function () {
+            console.log('WebSocket opened in Message Broker');
+
+            var connectedMessage = JSON.stringify({
+                action: "request-broker-authorization",
+                payload: {
+                    authorizationToken: applicationToken
+                }
+            });
+
+            console.log("Attempting handshake with WebSocket server.");
+            socket.send(connectedMessage);
+
+        };
+
+        socket.onmessage = function (event) {
+
+            console.log("message received within message broker: ");
+
+            var message = JSON.parse(event.data);
+
+            var action = message.action;
+            var correlationId = message.correlationId;
+            var payload = message.payload;
+            var messageId;
+
+            console.log("Core received: action: " + action + ((correlationId != undefined) ? ("correlationId: " + correlationId) : ("")));
+
+            switch (action) {
+                case "broker-authorization-response":
+                        (function () {
+                            var success = payload.success;
+                            if (success) {
+
+                                isConnected = true;
+
+                                sendExecutionRequestToDesktop('get-version', {}, "system", function (v) {
+                                    var version = v;
+                                    console.log("Starting up App Desktop version " + v);
+                                    if (!isStarted) {
+                                      startup();
+                                    }
+                                });
+
+                                function startup() {
+                                    isStarted = true;
+
+                                    function startCommandLineApp() {
+                                        getCommandLineArgumentObject(function (result) {
+                                            if (result.startupAppOptions) {
+                                                launchStartupApp(result.startupAppOptions);
+                                            } else if (result.startupUrl) {
+                                                launchStartupAppFromUrl(result.startupUrl);
+                                            }
+                                        });
+                                    }
+
+                                    sendExecutionRequestToDesktop("get-config", {}, "system", function (config) {
+                                        desktopControllerUrl = config.desktop_controller_url;
+                                        if (desktopControllerUrl) {
+                                            sendExecutionRequestToDesktop('get-command-line-arguments', {}, 'system', function (event) {
+                                                var data = event;
+                                                if (data.indexOf('--no-login-screen') == -1) {
+                                                    createAdminApp(desktopControllerUrl);
+                                                }
+
+                                                startCommandLineApp();
+                                            });
+                                        } else {
+                                            startCommandLineApp();
+                                        }
+                                    });
+                                }
+
+                            } else {
+                                console.error("Broker authentication failed.");
+                            }
+                        })();
+                    break;
+                case "ack":
+                    (function () {
+                        // This is for responses to message sent by the message broker
+                        fireMessageCallback(correlationId, payload);
+                    })();
+                    break;
+                case "process-action":
+                    (function () {
+                        messageId = payload.messageId;
+                        console.log("Processing action: " + payload.action + ((messageId) ? (" messageId: " + messageId) : ("")));
+                        processMessage();
+                    })();
+                    break;
+                case "process-system-message":
+                    (function () {
+                        messageId = payload.messageId;
+                        console.log("Processing action: " + payload.action + ((messageId) ? (" messageId: " + messageId) : ("")));
+                        processSystemMessage();
+                    })();
+                    break;
+            }
+
+            function processMessage() {
+                var sourceId = message.sourceId;
+                var clientMsg = payload;
+                var clientAction = payload.action;
+                var dispatchFunc = dispatchFunctionMap[clientAction];
+                if (dispatchFunc) {
+                    console.log("Executing dispatch function for action: " + clientAction + " from sourceId: " + sourceId);
+                    dispatchFunc(sourceId, clientMsg);
+                } else {
+                    respondToMessage(sourceId, clientMsg, {
+                        success: false,
+                        reason: 'Invalid action: ' + clientAction + '.'
+                    });
+                }
+            }
+
+            function processSystemMessage() {
+                var sourceId = message.sourceId;
+                var clientMsg = payload;
+                var clientAction = payload.action;
+                var dispatchFunc = desktopEventDispatchFunctionMap[clientAction];
+                if (dispatchFunc) {
+                    console.log("Executing dispatch function for event: " + clientAction + " from sourceId: " + sourceId);
+                    dispatchFunc(sourceId, clientMsg);
+                } else {
+                    respondToMessage(sourceId, clientMsg, {
+                        success: false,
+                        reason: 'Invalid action: ' + clientAction + '.'
+                    });
+                }
+            }
+        };
+
+        socket.onerror = function () {
+            console.error("Error establishing WebSocket connection within message broker");
+        };
+
+        socket.onclose = function () {
+            console.error("WebSocket connection closed within message broker");
+            retrySocketConnection();
+        };
+
+    }
+
+    function retrySocketConnection() {
+      if (isConnected) {
+        console.log("retrySocketConnection onclose");
+        isConnected = false;
+        socket = new WebSocket(websocketProtocol + '://127.0.0.1:' + (websocketPort ? websocketPort : '9696'));
+        setWsHandlers(socket);
+      }
+    }
+
+    function respondToMessage(sourceId, originalMessage, response) {
+        console.log("Sending response to action message");
+
+        if (originalMessage.messageId != undefined || !response.success || response.deprecated != undefined) {
+            response.msg = originalMessage; // TODO remove
+            var message = JSON.stringify({
+                action: "send-to-connection",
+                destinationId: sourceId,
+                payload: {
+                    action: "ack",
+                    correlationId: originalMessage.messageId,
+                    payload: response
+                }
+            });
+
+            socket.send(message);
+        }
+    }
+
+    window.sendMessageToConnection = sendMessageToConnection;
+    function sendMessageToConnection(destinationId, payload) {
+        var message = JSON.stringify({
+            action: "send-to-connection",
+            destinationId: destinationId,
+            payload: payload
+        });
+
+        socket.send(message);
+    }
+
+
+    function sendMessageToConnections(destinationIds, payload) {
+        var message = JSON.stringify({
+            action: "send-to-connections",
+            destinationIds: destinationIds,
+            payload: payload
+        });
+
+        socket.send(message);
+    }
+
+    function sendSystemMessageToConnections(action, systemTopic, message) {
+
+        var newPayload = {
+            action: "process-system-message",
+            payload: {
+                action: action,
+                systemTopic: systemTopic,
+                payload: message.payload
+            }
+        };
+
+        var destConnId = DesktopSystemBus.getDestinationConnectionIds(systemTopic, action);
+
+        console.log("sendSystemMessageToConnections::newPayload = " + JSON.stringify(newPayload));
+        console.log("sendSystemMessageToConnections::DestinationConnectionID = " + destConnId);
+
+        sendMessageToConnections(destConnId, newPayload);
+    }
+
+
+    function forwardMessageToApp(sourceId, targetUuid, message) {
+        console.log("forwarding message to app " + targetUuid);
+        /**
+         * We should construct these messages explicitly (even though its redundant) for clarity for now.
+         */
+        message.payload.sourceUuid = getAppUuidByConnectionId(sourceId);
+
+        var connections = AppUuidToPropertiesMap[targetUuid].connections;
+
+        if (targetUuid != "desktopcontroller") {
+            Object.keys(connections).forEach(function (id) {
+                var destinationId = connections[id];
+                console.log("forwarding message to app_uuid: " + targetUuid + " destinationId: " + destinationId + " id " + id);
+
+                sendMessageToConnection(destinationId, {
+                    action: "process-message",
+                    payload: message.payload
+                });
+            });
+        } else {
+            var destinationId = connections[targetUuid];
+            console.log("forwarding message to app_uuid: " + targetUuid + " destinationId: " + destinationId);
+
+            sendMessageToConnection(destinationId, {
+                action: "process-message",
+                payload: message.payload
+            });
+        }
+
+    }
+
+
+    var msgId = 0;
+    var messageCallbackMap = {};
+
+    function fireMessageCallback(correlationId, response) {
+        if (!response.success) {
+            throw new Error(response.reason);
+        } else if (messageCallbackMap[correlationId]) {
+            messageCallbackMap[correlationId].call(window, response.data);
+            delete messageCallbackMap[correlationId];
+        }
+    }
+
+    function sendExecutionRequestToDesktop(action, payload, systemTopic, callback) {
+        var messageObject = {
+            action: 'execute-native-function',
+            payload: {
+                messageId: msgId,
+                action: action,
+                payload: payload
+            }
+        };
+
+        if (systemTopic) {
+            messageObject.systemTopic = systemTopic;
+            messageObject.connectionIds = DesktopSystemBus.getDestinationConnectionIds(systemTopic, action);
+        }
+
+        var message = JSON.stringify(messageObject);
+
+        if (callback && typeof callback == "function") messageCallbackMap[msgId] = callback;
+
+        socket.send(message);
+
+        msgId++;
+    }
+
+
+    function forwardExecutionRequestToDesktop(sourceId, permissionFunction, systemTopic, originalMessage, messageType) {
+
+        console.log("Sending native execution request to message to Desktop WebSocket Server");
+
+        var response;
+        var message;
+
+        if (permissionFunction(sourceId, originalMessage)) {
+
+            if ((messageType == "window" || messageType == "application")
+                    && (originalMessage.payload && originalMessage.payload.uuid)) {
+
+                var payload = originalMessage.payload;
+                var uuid = payload.uuid;
+                var name = payload.name;
+
+                if (AppUuidToPropertiesMap[uuid] && AppUuidToPropertiesMap[uuid].isExternalApplication) {
+                    var externalAppSourceId = getConnectionIdFromAppUuidAndWindowName(uuid, name);
+
+                    if (externalAppSourceId) {
+                        var destinationToken = fin.desktop.getUuid();
+                        destinationTokenToDestinationIdMap[destinationToken] = sourceId;
+                        sendMessageToConnection(externalAppSourceId, {
+                            action: "process-external-app-action",
+                            payload: {
+                                action: originalMessage.action,
+                                messageId: originalMessage.messageId,
+                                destinationToken: destinationToken,
+                                payload: payload
+                            }
+                        });
+
+                        respondToMessage(sourceId, originalMessage, {
+                            success: true
+                        });
+
+                    } else {
+                        console.error("External application source ID not found");
+
+                        respondToMessage(sourceId, originalMessage, {
+                            success: false,
+                            reason: "External application source ID not found"
+                        });
+                    }
+
+                } else {
+                    dispatchMessage();
+                }
+
+            } else {
+                dispatchMessage();
+            }
+
+            function dispatchMessage() {
+
+                var messageObject = {
+                    action: 'execute-native-function',
+                    payload: {
+                        sourceId: sourceId,
+                        action: originalMessage.action,
+                        payload: originalMessage.payload
+                    }
+                };
+
+                if (originalMessage.hasOwnProperty('messageId'))
+                    messageObject.payload.messageId = originalMessage.messageId;
+
+                if (systemTopic) {
+                    messageObject.systemTopic = systemTopic;
+                    messageObject.connectionIds = DesktopSystemBus.getDestinationConnectionIds(systemTopic, originalMessage.action);
+                }
+
+                message = JSON.stringify(messageObject);
+
+                socket.send(message);
+            }
+
+
+        } else {
+
+            response = generateResponseMessage(originalMessage, false, "Permission denied");
+
+            respondToMessage(sourceId, originalMessage, response);  // If it fails, return to sender with response.
+        }
+    }
+
+
+    function generateResponseMessage(message, success, reason) {
+        return {
+            action: message.action,
+            success: success,
+            reason: reason
+        };
+    }
+
+    function logAccessError(sourceId, msg) {
+        var connectionId = getConnectionIdFromAppUuidAndWindowName("desktopcontroller", "desktopcontroller");
+        if (connectionId) {
+            msg.type = 'error';
+            var payload = {};
+            payload.topic = 'post-activity';
+            payload.sourceUuid = getAppUuidByConnectionId(sourceId);
+            payload.message = msg;
+            sendMessageToConnection(connectionId, {
+                action: "process-message",
+                payload: payload
+            });
+        }
+    }
+
+    function closeConnection(connectionId) {
+        var message = JSON.stringify({
+            action: "close-connection",
+            payload: {
+                connectionId: connectionId
+            }
+        });
+
+        socket.send(message);
+    }
+
+    function sendNativeError(reason, connectionId) {
+        var message = JSON.stringify({
+            action: "native-error",
+            payload: {
+                connectionId: connectionId,
+                reason: reason
+            }
+        });
+
+        socket.send(message);
+    }
+
+    var desktopEventDispatchFunctionMap = {
+        "connection-closed": function (sourceId, message) {
+            DesktopEvent.connectionClosed(sourceId, message);
+        },
+        "deskband-icon-clicked": function (sourceId, message) {
+            DesktopEvent.deskbandIconClicked(sourceId, message);
+        },
+        "external-message": function (sourceId, message) {
+            DesktopEvent.externalMessage(sourceId, message);
+        },
+        "application-started": function (sourceId, message) {
+            DesktopEvent.applicationStarted(sourceId, message);
+        },
+        "application-not-responding": function (sourceId, message) {
+            DesktopEvent.applicationNotResponding(sourceId, message);
+        },
+        "application-responding": function (sourceId, message) {
+            DesktopEvent.applicationResponding(sourceId, message);
+        },
+        "application-run-requested": function (sourceId, message) {
+            DesktopEvent.applicationRunRequested(sourceId, message);
+        },
+        "application-out-of-memory": function (sourceId, message) {
+            DesktopEvent.applicationOutOfMemory(sourceId, message);
+        },
+        "application-crashed": function (sourceId, message) {
+            DesktopEvent.applicationCrashed(sourceId, message);
+        },
+        "application-error": function (sourceId, message) {
+            DesktopEvent.applicationError(sourceId, message);
+        },
+        "application-closed": function (sourceId, message) {
+            DesktopEvent.applicationClosed(sourceId, message);
+        },
+        "application-tray-icon-clicked": function (sourceId, message) {
+            DesktopEvent.applicationTrayIconClicked(sourceId, message);
+        },
+        "window-moved": function (sourceId, message) {
+            DesktopEvent.windowMoved(sourceId, message);
+        },
+        "window-moving": function (sourceId, message) {
+            DesktopEvent.windowMoving(sourceId, message);
+        },
+        "window-bounds-changed": function (sourceId, message) {
+            DesktopEvent.windowBoundsChanged(sourceId, message);
+        },
+        "window-bounds-changing": function (sourceId, message) {
+            DesktopEvent.windowBoundsChanging(sourceId, message);
+        },
+        "window-group-changed": function (sourceId, message) {
+            DesktopEvent.windowGroupChanged(sourceId, message);
+        },
+        "window-disabled-frame-bounds-changed": function (sourceId, message) {
+            DesktopEvent.windowDisabledFrameBoundsChanged(sourceId, message);
+        },
+        "window-disabled-frame-bounds-changing": function (sourceId, message) {
+            DesktopEvent.windowDisabledFrameBoundsChanging(sourceId, message);
+        },
+        "window-frame-disabled": function (sourceId, message) {
+            DesktopEvent.windowFrameDisabled(sourceId, message);
+        },
+        "window-frame-enabled": function (sourceId, message) {
+            DesktopEvent.windowFrameEnabled(sourceId, message);
+        },
+        "window-sized": function (sourceId, message) {
+            DesktopEvent.windowBoundsChanged(sourceId, message);
+        },
+        "window-sizing": function (sourceId, message) {
+            DesktopEvent.windowBoundsChanging(sourceId, message);
+        },
+        "window-focused": function (sourceId, message) {
+            DesktopEvent.windowFocused(sourceId, message);
+        },
+        "window-blurred": function (sourceId, message) {
+            DesktopEvent.windowBlurred(sourceId, message);
+        },
+        "window-closed": function (sourceId, message) {
+            DesktopEvent.windowClosed(sourceId, message);
+        },
+        "window-close-requested": function (sourceId, message) {
+            DesktopEvent.windowCloseRequested(sourceId, message);
+        },
+        "window-shown": function (sourceId, message) {
+            DesktopEvent.windowShown(sourceId, message);
+        },
+        "window-hidden": function (sourceId, message) {
+            DesktopEvent.windowHidden(sourceId, message);
+        },
+        "window-minimized": function (sourceId, message) {
+            DesktopEvent.windowMinimized(sourceId, message);
+        },
+        "window-maximized": function (sourceId, message) {
+            DesktopEvent.windowMaximized(sourceId, message);
+        },
+        "window-restored": function (sourceId, message) {
+            DesktopEvent.windowRestored(sourceId, message);
+        },
+        "monitor-info-changed": function (sourceId, message) {
+            DesktopEvent.monitorInfoChanged(sourceId, message);
+        },
+        "desktop-icon-clicked": function (sourceId, message) {
+            DesktopEvent.desktopIconClicked(sourceId, message);
+        },
+        "show-start-window": function (sourceId, message) {
+            DesktopEvent.showStartWindow(sourceId, message);
+        },
+        "hide-start-window": function (sourceId, message) {
+            DesktopEvent.hideStartWindow(sourceId, message);
+        },
+        "idle-state-changed": function (sourceId, message) {
+            DesktopEvent.idleStateChanged(sourceId, message);
+        },
+        "session-changed": function (sourceId, message) {
+            DesktopEvent.sessionChanged(sourceId, message);
+        }
+    };
+
+    var dispatchFunctionMap = {
+        "external-ack": function (sourceId, message) {
+            Core.externalAck(sourceId, message);
+        },
+        "pong": function (sourceId, message) {
+            Core.pong(sourceId, message)
+        },
+        "request-authorization": function (sourceId, message) {
+            Core.requestAuthorization(sourceId, message);
+        },
+        "request-external-authorization": function (sourceId, message) {
+            Core.requestExternalAuthorization(sourceId, message);
+        },
+        "external-message-result": function(sourceId, message) {
+            Core.externalMessageResult(sourceId, message);
+        },
+        "send-message": function (sourceId, message) {
+            InterAppBus.send(sourceId, message);
+        },
+        "publish-message": function (sourceId, message) {
+            InterAppBus.publish(sourceId, message);
+        },
+        "subscribe": function (sourceId, message) {
+            InterAppBus.subscribe(sourceId, message);
+        },
+        "unsubscribe": function (sourceId, message) {
+            InterAppBus.unsubscribe(sourceId, message);
+        },
+        "subscribe-to-system-message": function (sourceId, message) {
+            DesktopSystemBus.subscribe(sourceId, message);
+        },
+        "unsubscribe-to-system-message": function (sourceId, message) {
+            DesktopSystemBus.unsubscribe(sourceId, message);
+        },
+        "subscribe-to-desktop-event": function (sourceId, message) {
+            DesktopEvent.subscribe(sourceId, message);
+        },
+        "unsubscribe-to-desktop-event": function (sourceId, message) {
+            DesktopEvent.unsubscribe(sourceId, message);
+        },
+        "create-application": function (sourceId, message) {
+            System.createApplication(sourceId, message);
+        },
+        "invoke-application": function (sourceId, message) {
+            System.invokeApplication(sourceId, message);
+        },
+        "exit-desktop": function (sourceId, message) {
+            System.exitDesktop(sourceId, message);
+        },
+        "get-config": function (sourceId, message) {
+            System.getConfig(sourceId, message);
+        },
+        "get-device-id": function (sourceId, message) {
+            System.getDeviceId(sourceId, message);
+        },
+        "install-start-icon": function (sourceId, message) {
+            System.installStartIcon(sourceId, message);
+        },
+        "install-deskband-icon": function (sourceId, message) {
+            System.installDeskbandIcon(sourceId, message);
+        },
+        "remove-start-icon": function (sourceId, message) {
+            System.removeStartIcon(sourceId, message);
+        },
+        "remove-deskband-icon": function (sourceId, message) {
+            System.removeDeskbandIcon(sourceId, message);
+        },
+        "show-start-window": function (sourceId, message) {
+            System.showStartWindow(sourceId, message);
+        },
+        "hide-start-window": function (sourceId, message) {
+            System.hideStartWindow(sourceId, message);
+        },
+        "show-developer-tools": function (sourceId, message) {
+            System.showDeveloperTools(sourceId, message);
+        },
+        "set-clipboard": function (sourceId, message) {
+            System.setClipboard(sourceId, message);
+        },
+        "write-to-log": function (sourceId, message) {
+            System.writeToLog(sourceId, message);
+        },
+        "view-log": function (sourceId, message) {
+            System.viewLog(sourceId, message);
+        },
+        "launch-external-process": function (sourceId, message) {
+            System.launchExternalProcess(sourceId, message);
+        },
+        "terminate-external-process": function (sourceId, message) {
+            System.terminateExternalProcess(sourceId, message);
+        },
+        "release-external-process": function (sourceId, message) {
+            System.releaseExternalProcess(sourceId, message);
+        },
+        "list-logs": function (sourceId, message) {
+            System.listLogs(sourceId, message);
+        },
+        "get-proxy-settings": function (sourceId, message) {
+            System.getProxySettings(sourceId, message);
+        },
+        "update-proxy": function (sourceId, message) {
+            System.updateProxySettings(sourceId, message);
+        },
+        "process-snapshot": function (sourceId, message) {
+            System.getProcessList(sourceId, message);
+        },
+        "get-command-line-arguments": function (sourceId, message) {
+            System.getCommandLineArguments(sourceId, message);
+        },
+        "clear-cache": function (sourceId, message) {
+            System.clearCache(sourceId, message);
+        },
+        "delete-cache-request": function (sourceId, message) {
+            System.deleteCacheRequest(sourceId, message);
+        },
+        "get-version": function (sourceId, message) {
+            System.getVersion(sourceId, message);
+        },
+        "get-remote-config": function (sourceId, message) {
+            System.getRemoteConfig(sourceId, message);
+        },
+        "get-monitor-info": function (sourceId, message) {
+            System.getMonitorInfo(sourceId, message);
+        },
+        "get-all-windows": function (sourceId, message) {
+            System.getAllWindows(sourceId, message);
+        },
+        "get-all-applications": function (sourceId, message) {
+            System.getAllApplications(sourceId, message);
+        },
+        "get-mouse-position": function (sourceId, message) {
+            System.getMousePosition(sourceId, message);
+        },
+        "open-url-with-browser": function (sourceId, message) {
+            System.openUrlWithBrowser(sourceId, message);
+        },
+        "remove-application": function (sourceId, message) {
+            Application.removeApplication(sourceId, message);
+        },
+        "run-application": function (sourceId, message) {
+            Application.runApplication(sourceId, message);
+        },
+        "close-application": function (sourceId, message) {
+            Application.closeApplication(sourceId, message);
+        },
+        "restart-application": function (sourceId, message) {
+            Application.restartApplication(sourceId, message);
+        },
+        "terminate-application": function (sourceId, message) {
+            Application.terminateApplication(sourceId, message);
+        },
+        "wait-for-hung-application": function (sourceId, message) {
+            Application.waitForHungApplication(sourceId, message);
+        },
+        "is-application-running": function (sourceId, message) {
+            Application.isApplicationRunning(sourceId, message);
+        },
+        "register-child-window-settings": function (sourceId, message) {
+            Application.registerChildWindowSettings(sourceId, message);
+        },
+        "register-child-window-load-callback": function (sourceId, message) {
+            Application.registerChildWindowLoadCallback(sourceId, message);
+        },
+        "create-notification": function (sourceId, message) {
+            Application.createNotification(sourceId, message);
+        },
+        "dock-window": function (sourceId, message) {
+            Application.dockWindow(sourceId, message);
+        },
+        "undock-window": function (sourceId, message) {
+            Application.unDockWindow(sourceId, message);
+        },
+        "register-external-window": function (sourceId, message) {
+            Application.registerExternalWindow(sourceId, message);
+        },
+        "deregister-external-window": function (sourceId, message) {
+            Application.deregisterExternalWindow(sourceId, message);
+        },
+        "ping-child-window": function (sourceId, message) {
+            Application.pingChildWindow(sourceId, message);
+        },
+        "set-tray-icon": function (sourceId, message) {
+            Application.setTrayicon(sourceId, message);
+        },
+        "remove-tray-icon": function (sourceId, message) {
+            Application.removeTrayIcon(sourceId, message);
+        },
+        "get-child-windows": function (sourceId, message) {
+            Application.getChildWindows(sourceId, message);
+        },
+        "get-application-groups": function (sourceId, message) {
+            Application.getGroups(sourceId, message);
+        },
+        "get-application-manifest": function (sourceId, message) {
+            Application.getApplicationManifest(sourceId, message);
+        },
+        "get-notification-info": function (sourceId, message) {
+            Notification.getNotificationInfo(sourceId, message);
+        },
+        "create-new-notification": function (sourceId, message) {
+            Notification.createNotification(sourceId, message);
+        },
+        "send-action-to-notifications-center": function (sourceId, message) {
+            Notification.sendActionToNotificationsCenter(sourceId, message);
+        },
+        "send-action-to-notification": function (sourceId, message) {
+            Notification.sendActionToNotification(sourceId, message);
+        },
+        "dispatch-notification-event": function (sourceId, message) {
+            Notification.dispatchNotificationEvent(sourceId, message);
+        },
+        "show-window": function (sourceId, message) {
+            Window.showWindow(sourceId, message);
+        },
+        "hide-window": function (sourceId, message) {
+            Window.hideWindow(sourceId, message);
+        },
+        "close-window": function (sourceId, message) {
+            Window.closeWindow(sourceId, message);
+        },
+        "maximize-window": function (sourceId, message) {
+            Window.maximizeWindow(sourceId, message);
+        },
+        "minimize-window": function (sourceId, message) {
+            Window.minimizeWindow(sourceId, message);
+        },
+        "restore-window": function (sourceId, message) {
+            Window.restoreWindow(sourceId, message);
+        },
+        "focus-window": function (sourceId, message) {
+            Window.focusWindow(sourceId, message);
+        },
+        "blur-window": function (sourceId, message) {
+            Window.blurWindow(sourceId, message);
+        },
+        "show-at-window": function (sourceId, message) {
+            Window.showAtWindow(sourceId, message);
+        },
+        "move-window": function (sourceId, message) {
+            Window.moveWindow(sourceId, message);
+        },
+        "move-window-by": function (sourceId, message) {
+            Window.moveWindowBy(sourceId, message);
+        },
+        "resize-window": function (sourceId, message) {
+            Window.resizeWindow(sourceId, message);
+        },
+        "resize-window-by": function (sourceId, message) {
+            Window.resizeWindowBy(sourceId, message);
+        },
+        "is-window-showing": function (sourceId, message) {
+            Window.isWindowShowing(sourceId, message);
+        },
+        "bring-window-to-front": function (sourceId, message) {
+            Window.bringWindowToFront(sourceId, message);
+        },
+        "send-window-to-back": function (sourceId, message) {
+            Window.sendWindowToBack(sourceId, message);
+        },
+        "get-window-state": function (sourceId, message) {
+            Window.getState(sourceId, message);
+        },
+        "get-window-snapshot": function (sourceId, message) {
+            Window.getSnapshot(sourceId, message);
+        },
+        "get-window-bounds": function (sourceId, message) {
+            Window.getBounds(sourceId, message);
+        },
+        "get-window-group": function (sourceId, message) {
+            Window.getGroup(sourceId, message);
+        },
+        "update-window-options": function (sourceId, message) {
+            Window.updateOptions(sourceId, message);
+        },
+        "get-window-options": function (sourceId, message) {
+            Window.getOptions(sourceId, message);
+        },
+        "animate-window": function (sourceId, message) {
+            Window.animate(sourceId, message);
+        },
+        "join-window-group": function (sourceId, message) {
+            Window.joinGroup(sourceId, message);
+        },
+        "merge-window-groups": function (sourceId, message) {
+            Window.mergeGroups(sourceId, message);
+        },
+        "leave-window-group": function (sourceId, message) {
+            Window.leaveGroup(sourceId, message);
+        },
+        "flash-window": function (sourceId, message) {
+            Window.flash(sourceId, message);
+        },
+        "disable-window-frame": function (sourceId, message) {
+            Window.disableWindowFrame(sourceId, message);
+        },
+        "enable-window-frame": function (sourceId, message) {
+            Window.enableWindowFrame(sourceId, message);
+        },
+        "set-window-bounds": function (sourceId, message) {
+            Window.setWindowBounds(sourceId, message);
+        },
+        "set-foreground-window": function (sourceId, message) {
+            Window.setForegroundWindow(sourceId, message);
+        },
+        "grant-access": function (sourceId, message) {
+            Application.grantAccess(sourceId, message);
+        },
+        "revoke-access": function (sourceId, message) {
+            Application.revokeAccess(sourceId, message);
+        },
+        "grant-window-access": function (sourceId, message) {
+            Window.grantAccess(sourceId, message);
+        },
+        "revoke-window-access": function (sourceId, message) {
+            Window.revokeAccess(sourceId, message);
+        },
+        "external-window-action": function (sourceId, message) {
+            Window.dispatchExternalWindowAction(sourceId, message);
+        }
+    };
+
+    var generateAuthenticationToken = fin.desktop.getUuid;
+
+    var AppUuidToPropertiesMap = {};
+
+    var PendingAuthTokenToAppUuidMap = {};
+
+    var PendingFileTokenMap = {};
+
+    function createAdminApp(url) {
+        console.log("Creating admin app " + url);
+        var uuid = "desktopcontroller";
+        var authToken = generateAuthenticationToken();
+        var options = {
+            authorizationToken: authToken,
+            name: 'Desktop Controller',
+            uuid: uuid,
+            url: url,
+            version: openFinVersion,
+            defaultWidth: 10,
+            defaultHeight: 10,
+            defaultTop: 10,
+            defaultLeft: 10,
+            frame: false,
+            resizable: false,
+            autoShow: false,
+            showTaskbarIcon: false,
+            contextMenu: true,
+            systemTopics: ["application", "system"]
+        };
+
+
+        PendingAuthTokenToAppUuidMap[authToken] = {
+            uuid: options.uuid,
+            name: options.uuid
+        };
+
+        AppUuidToPropertiesMap[options.uuid] = {
+            isAdmin: true,
+            systemTopics: options.systemTopics,
+            baseUrl: getBaseUrl(url),
+            uuid: options.uuid,
+            connections: { },
+            mainWindow: options.name
+        };
+
+        sendExecutionRequestToDesktop("create-application", options, 'system', function (response) {
+            console.log('CREATE-APPLICATION CALLBACK SUCCESSFULLY FIRED');
+            sendExecutionRequestToDesktop("run-application", {
+                uuid: 'desktopcontroller'
+            }, 'application', function (response) {
+                console.log('RUN-APPLICATION CALLBACK SUCCESSFULLY FIRED');
+            });
+        });
+
+
+        applicationListeners[uuid] = applicationListeners[uuid] || {};
+        applicationListeners[uuid]["application-closed"] = applicationListeners[uuid]["application-closed"] || [];
+
+        applicationListeners[uuid]["application-closed"].push(function () {
+            sendExecutionRequestToDesktop("exit-desktop", {}, "system");
+        });
+
+
+    }
+
+    function getSelfSubscribedConnectionIdByAppUuid(uuid) {
+        var ret_id;
+        var properties = AppUuidToPropertiesMap[uuid];
+        if (properties && properties.connections) {
+            ret_id = properties.connections[uuid];
+        }
+        return ret_id;
+    }
+
+    function getAppUuidByConnectionId(id) {
+        var uuids = Object.keys(AppUuidToPropertiesMap);
+        var ret_id = undefined;
+        uuids.forEach(function (uuid) {
+            var names = Object.keys(AppUuidToPropertiesMap[uuid].connections);
+            names.forEach(function (name) {
+                if (AppUuidToPropertiesMap[uuid].connections[name] == id) ret_id = uuid;
+            });
+        });
+        console.log('getting app uuid: ' + ret_id + ' from connectionId: ' + id);
+        return ret_id;
+    }
+
+    function getWindowNameByConnectionId(id) {
+        var uuids = Object.keys(AppUuidToPropertiesMap);
+        var ret_id;
+        uuids.forEach(function (uuid) {
+            var names = Object.keys(AppUuidToPropertiesMap[uuid].connections);
+            names.forEach(function (name) {
+                if (AppUuidToPropertiesMap[uuid].connections[name] == id) ret_id = name;
+            });
+        });
+        console.log('getting app uuid: ' + ret_id + ' from connectionId: ' + id);
+        return ret_id;
+    }
+
+    var Core = {};
+
+    var sendDesktopEventToConnections_external;
+
+    var destinationTokenToDestinationIdMap = {};
+
+    (function () {
+
+        var pingId = 0;
+
+        var pingCallbackMap = {};
+
+        Core.externalAck = function (sourceId, message) {
+            var payload = message.payload;
+            var destinationToken = payload.destinationToken;
+            var destinationId = destinationTokenToDestinationIdMap[destinationToken];
+
+            if (destinationId != undefined && payload.correlationId) {
+                sendMessageToConnection(destinationId, {
+                    action: "ack",
+                    correlationId: payload.correlationId,
+                    payload: {
+                        success: payload.success,
+                        reason: payload.reason
+                    }
+                });
+                delete destinationTokenToDestinationIdMap[destinationToken];
+            }
+
+        };
+
+        Core.pong = function (sourceId, message) {
+            var payload = message.payload;
+            var correlationId = payload.correlationId;
+            var pingedBefore = payload.pingedBefore;
+
+            if (pingCallbackMap[correlationId]) {
+                pingCallbackMap[correlationId].call(window, pingedBefore);
+                delete pingCallbackMap[correlationId];
+            }
+
+        };
+
+        Core.ping = function (uuid, name, callback) {
+            var properties = AppUuidToPropertiesMap[uuid];
+            if (properties) {
+                var connections = properties.connections;
+                if (connections) {
+                    var connectionId = connections[name];
+                    if (connectionId) {
+
+                        sendMessageToConnection(connectionId, {
+                            action: "ping",
+                            payload: {
+                                pingId: pingId
+                            }
+                        });
+
+                        pingCallbackMap[pingId] = callback;
+
+                        pingId++;
+
+                    }
+                }
+            }
+        };
+
+
+        Core.requestAuthorization = function (sourceId, message) {
+            var authPayload = message.payload;
+            var authType = authPayload.type;
+            var response = {
+                action: "authorization-response"
+            };
+            var responsePayload = {
+                success: false,
+                reason: "Invalid authorization type."
+            };
+
+
+            switch (authType) {
+                case "application-token":
+
+                    (function () {
+
+                        var authorizationToken = authPayload.authorizationToken;
+                        var obj = PendingAuthTokenToAppUuidMap[authorizationToken];
+
+                        if (obj) {
+                            // Refactor auth/re-auth
+                            validateUuid(obj.uuid, obj.name, false, /*undefined,*/ authorizationToken);
+                        } else {
+                            responsePayload = {
+                                success: false,
+                                reason: "Invalid application token."
+                            };
+                        }
+
+
+                        response.payload = responsePayload;
+                        sendMessageToConnection(sourceId, response);
+
+                        if (!responsePayload.success)
+                            closeConnection(sourceId);
+
+
+                    })();
+
+                    break;
+                case "command-line-token":
+
+                    sendExecutionRequestToDesktop("get-command-line-arguments", {}, undefined, function (event) {
+
+                        var authToken = authPayload.authorizationToken;
+                        var appUuid = authPayload.uuid;
+
+                        var args = event;
+                        var option1 = '--authorizationtoken=' + authToken;
+                        var option2 = '--authorizationtoken="' + authToken + '"';
+
+
+                        if (args.indexOf(option1) != -1 || args.indexOf(option2) != -1) {
+                            responsePayload = {
+                                success: true
+                            };
+                            validateUuid(appUuid, undefined, true);
+                        } else {
+                            responsePayload = {
+                                success: false,
+                                reason: "Invalid authorization token."
+                            };
+                        }
+
+                        response.payload = responsePayload;
+
+                        sendMessageToConnection(sourceId, response);
+
+                        if (!responsePayload.success)
+                            closeConnection(sourceId);
+
+
+                    });
+                    break;
+                case "external-authorization":
+
+                    (function() {
+                        // the result of some auth with an external server using authPayload
+                        var authResponse = {
+                            success: false
+                        };
+
+                        var success = authResponse.success;
+
+                        if (success) {
+                            var appUuid = authPayload.uuid;
+                            responsePayload = {
+                                success: true
+                            };
+                            validateUuid(appUuid, undefined, true, undefined, undefined, true);
+                        } else {
+                            responsePayload = {
+                                success: false,
+                                reason: authResponse.reason
+                            };
+                        }
+
+                        response.payload = responsePayload;
+                        sendMessageToConnection(sourceId, response);
+
+                        if (!responsePayload.success)
+                            closeConnection(sourceId);
+
+                    })();
+
+                    break;
+                case "file-token":
+                    (function() {
+
+                        var fileToken = PendingFileTokenMap[sourceId];
+
+                        sendExecutionRequestToDesktop("read-and-delete-token", {
+                            file: fileToken.file
+                        }, undefined, function (token) {
+                            if (token == fileToken.token) {
+                                responsePayload = {
+                                    success: true
+                                };
+
+                                var appUuid = authPayload.uuid;
+                                validateUuid(appUuid, undefined, true, undefined, undefined, true);
+                            } else {
+                                responsePayload = {
+                                    success: false,
+                                    reason: "Invalid token or file"
+                                }
+                            }
+
+                            delete PendingFileTokenMap[sourceId];
+
+                            response.payload = responsePayload;
+
+                            sendMessageToConnection(sourceId, response);
+
+                            if (!responsePayload.success)
+                                closeConnection(sourceId);
+                        });
+
+                    })();
+                    break;
+            }
+
+            function validateUuid(appUuid, name, isAdmin, systemTopics, authToken, isExternalApplication) {
+                if (appUuid) {
+                    //if (!AppUuidToPropertiesMap[obj.uuid] || !AppUuidToPropertiesMap[obj.uuid].connections[obj.uuid] || !(obj.uuid in AppUuidToPropertiesMap[obj.uuid].connections[obj.uuid])) {
+                    name = name || appUuid;
+                    AppUuidToPropertiesMap[appUuid] = AppUuidToPropertiesMap[appUuid] || {
+                        isAdmin: (typeof isAdmin != "boolean") ? false : isAdmin,
+                        uuid: appUuid,
+                        isExternalApplication: (isExternalApplication) ? true : false,
+                        systemTopics: systemTopics,
+                        connections: {
+
+                        }
+                    };
+
+                    AppUuidToPropertiesMap[appUuid].connections[name] = sourceId;
+
+                    killNotifications(appUuid, name);
+
+                    responsePayload = {
+                        success: true
+                    };
+
+                    sendDesktopEventToConnections_external("window-initialized", {
+                        action: "window-initialized",
+                        payload: {
+                            uuid: appUuid,
+                            name: name
+                        }
+                    });
+
+                    sendDesktopEventToConnections_external("application-initialized", {
+                        action: "application-initialized",
+                        payload: {
+                            uuid: appUuid
+                        }
+                    });
+
+                    //check if child window and then delete token
+                    if (appUuid != name) delete PendingAuthTokenToAppUuidMap[authToken];
+                } else {
+                    responsePayload = {
+                        success: false,
+                        reason: 'Invalid application uuid: ' + appUuid
+                    };
+                }
+            }
+
+
+        };
+
+        Core.externalMessageResult = function(sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        Core.requestExternalAuthorization = function (sourceId, message) {
+            var payload = message.payload;
+            var type = payload.type;
+
+            switch (type) {
+                case "file-token":
+
+                    sendExecutionRequestToDesktop("get-base-path", {}, undefined, function (path) {
+
+                        var responsePayload = {
+                            file: path + fin.desktop.getUuid(),
+                            token: fin.desktop.getUuid()
+                        };
+
+                        PendingFileTokenMap[sourceId] = responsePayload;
+
+                        sendMessageToConnection(sourceId, {
+                            action: "external-authorization-response",
+                            payload: responsePayload
+                        });
+                    });
+
+                    break;
+            }
+        };
+
+    })();
+
+
+    var System = {};
+
+    function isAllowed(sourceId, message) {
+        console.log('Asking permission to perform desktop action from connectionId: ' + sourceId);
+        var uuid = getAppUuidByConnectionId(sourceId);
+        console.log('Found uuid corresponding to connectionId. uuid: ' + uuid);
+        if (AppUuidToPropertiesMap[uuid])
+            console.log('Found AppProperties corresponding to uuid. properties: ', AppUuidToPropertiesMap[uuid]);
+
+        return (uuid && AppUuidToPropertiesMap[uuid]) || sourceId == undefined;
+    }
+
+    (function () {
+
+        /**
+         * The payload for this function should look like this: {
+         * uuid: the uuid of the application,
+         * url: http://url.com
+         * defaultTop: ...
+         * defaultLeft: ...
+         * ...
+         * }
+         */
+
+        System.createApplication = function (sourceId, message) {
+            if (isAllowed(sourceId, message)) {
+                var options = message.payload;
+                var authorizationToken = generateAuthenticationToken();
+                var appUrl = options.url || (typeof options.mainWindowOptions == "object"? options.mainWindowOptions.url : undefined);
+                if(!appUrl || typeof appUrl != "string" || appUrl == "") {
+                    respondToMessage(sourceId, message, {
+                        success: false,
+                        reason: 'No URL specified: ' + options.uuid
+                    });
+                } else if (!options.uuid || typeof options.uuid != "string" || options.uuid == "" || (options.uuid == "*")) {
+                    respondToMessage(sourceId, message, {
+                        success: false,
+                        reason: 'Invalid application UUID: ' + options.uuid
+                    });
+                } else if (doesOverlapWithAnyExistingBaseAppUrls(options.uuid, options.url)) {
+                    respondToMessage(sourceId, message, {
+                        success: false,
+                        reason: "Security error: URL overlaps with an existing application's URL"
+                    });
+                } else if (!options.name || typeof options.name != "string" || options.name == "" || (options.name == "*")) {
+                    respondToMessage(sourceId, message, {
+                        success: false,
+                        reason: 'Invalid application name: ' + options.uuid
+                    });
+                } else if (!(options.uuid in AppUuidToPropertiesMap)) {
+
+                    PendingAuthTokenToAppUuidMap[authorizationToken] = {
+                        uuid: options.uuid,
+                        name: options.uuid
+                    };
+                    options.authorizationToken = authorizationToken;
+                    var parentAppUuid = getAppUuidByConnectionId(sourceId);
+
+                    AppUuidToPropertiesMap[options.uuid] = {
+                        // remove setting of isAdmin here so only desktopcontroller is admin app.  Access permissions for all other apps are based
+                        // on grant-access and grant-window-access
+                        isAdmin: (options.isAdmin) ? true : false,
+                        uuid: options.uuid,
+                        baseUrl: getBaseUrl(appUrl),
+                        systemTopics: options.systemTopics,
+                        connections: { },
+                        mainWindow: options.name,
+                        maxChildApps: options.maxChildApps,
+                        validChildAppDomains: options.validChildAppDomains,
+                        parentAppUuid: parentAppUuid,
+                        activeChildAppCount: 0
+                    };
+
+                    var mainWindowOptions = options.mainWindowOptions;
+
+                    // merge mainWindowOptions node one level up in the tree.
+                    // This ensures backwards compatibility.
+                    if (typeof mainWindowOptions == "object") {
+                        var optUrl = options.url;
+                        var keys = Object.keys(mainWindowOptions);
+                        keys.forEach(function (key) {
+                            if (key != "name" &&
+                                    (key != "url" || !optUrl || typeof optUrl != "string" || optUrl == ""))
+                                options[key] = mainWindowOptions[key];
+                        });
+
+                        // Default to "about:blank" if not specified
+                        options.url = options.url || "about:blank";
+                        delete options.mainWindowOptions;
+                    }
+
+                    forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+
+                    AppUuidToPropertiesMap[parentAppUuid].activeChildAppCount += 1;
+                    console.log('active child apps: ' + AppUuidToPropertiesMap[parentAppUuid].activeChildAppCount);
+
+                    console.log("attempting to sending create-application to connections");
+                    var systemNotificationId = getConnectionIdFromAppUuidAndWindowName("desktopcontroller", "systemnotification");
+                    if (typeof systemNotificationId != "undefined") {
+                        console.log("sending create-application to connections", message);
+                        sendMessageToConnection(systemNotificationId, {
+                            action: "process-system-message",
+                            payload: message
+                        });
+                    }
+
+                } else {
+                    respondToMessage(sourceId, message, {
+                        success: false,
+                        reason: 'Application with specified UUID already exists'
+                    });
+                }
+            } else {
+                respondToMessage(sourceId, message, {
+                    success: false,
+                    reason: 'Permission denied'
+                });
+            }
+        };
+
+        function doesOverlapWithAnyExistingBaseAppUrls(uuid, url) {
+            var uuids = Object.keys(AppUuidToPropertiesMap);
+
+            if (uuid && url && false) {
+                var baseUrl = getBaseUrl(url);
+                for (var key in AppUuidToPropertiesMap) {
+                    var properties = AppUuidToPropertiesMap[key];
+                    console.log(properties);
+                    if (properties && uuid != properties.uuid && properties.baseUrl && (properties.baseUrl.indexOf(baseUrl) != -1 || baseUrl.indexOf(properties.baseUrl) != -1)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+
+        System.invokeApplication = function (sourceId, message) {
+            var connectionId = getConnectionIdFromAppUuidAndWindowName("desktopcontroller", "desktopcontroller");
+            if (connectionId) {
+                var payload = {};
+                if (message.hasOwnProperty('messageId')) payload.messageId = message.messageId;
+                payload.topic = 'invoke-application';
+                payload.sourceUuid = getAppUuidByConnectionId(sourceId);
+                payload.message = message.payload;
+                sendMessageToConnection(connectionId, {
+                    action: "process-message",
+                    payload: payload
+                });
+            } else {
+                console.error("desktopcontroller not running")
+                respondToMessage(sourceId, message, {
+                    success: false,
+                    reason: "DesktopController center not running"
+                });
+            }
+        };
+
+        /**
+         * No payload needed here.
+         * @param message
+         */
+
+
+        System.exitDesktop = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.installStartIcon = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.installDeskbandIcon = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.removeStartIcon = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.removeDeskbandIcon = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.showStartWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.hideStartWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.showDeveloperTools = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.setClipboard = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.getCommandLineArguments = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.writeToLog = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        /**
+         * No payload needed here.
+         * @param message
+         */
+
+        System.listLogs = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, "system", message);
+        };
+
+        System.viewLog = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, "system", message);
+        };
+
+        System.launchExternalProcess = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, "system", message);
+        };
+
+        System.terminateExternalProcess = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, "system", message);
+        };
+
+        System.releaseExternalProcess = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, "system", message);
+        };
+
+        System.getConfig = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.getDeviceId = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.getVersion = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.getRemoteConfig = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.getMonitorInfo = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.getAllWindows = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.getAllApplications = function (sourceId, message) {
+
+            if (isAllowed(sourceId, message)) {
+                sendExecutionRequestToDesktop("get-all-applications", {}, "system", function (apps) {
+                    var externalApps = [];
+                    for (var uuid in AppUuidToPropertiesMap) {
+                        if (AppUuidToPropertiesMap[uuid].isExternalApplication) {
+                            externalApps.push({
+                                isRunning: true,
+                                uuid: uuid
+                            });
+                        }
+                    }
+
+                    apps = apps.concat(externalApps);
+
+                    respondToMessage(sourceId, message, {
+                        success: true,
+                        data: apps
+                    });
+                });
+            } else {
+                respondToMessage(sourceId, message, {
+                    action: message.action,
+                    success: false,
+                    reason: "Permission denied"
+                });
+            }
+            //forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.getMousePosition = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.openUrlWithBrowser = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.getProxySettings = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.updateProxySettings = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.getProcessList = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.clearCache = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+        System.deleteCacheRequest = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message);
+        };
+
+    })();
+
+
+    var DesktopEvent = {};
+
+    (function () {
+
+
+        // Handle System Bus Messages that originate from the Desktop
+
+        var desktopEventToTopicMap = {
+            "show-start-window": "system",
+            "hide-start-window": "system",
+            "deskband-icon-clicked": "system",
+            "monitor-info-changed": "system",
+            "desktop-icon-clicked": "system",
+            "idle-state-changed": "system",
+            "session-changed": "system",
+            "application-not-responding": "application",
+            "application-responding": "application",
+            "application-run-requested": "application",
+            "application-out-of-memory": "application",
+            "application-crashed": "application",
+            "application-error": "application",
+            "application-closed": "application",
+            "application-initialized": "application",
+            "application-started": "application",
+            "application-tray-icon-clicked": "application",
+            "window-moved": "window",
+            "window-moving": "window",
+            "window-bounds-changed": "window",
+            "window-bounds-changing": "window",
+            "window-group-changed": "window",
+            "window-disabled-frame-bounds-changed": "window",
+            "window-disabled-frame-bounds-changing": "window",
+            "window-frame-disabled": "window",
+            "window-frame-enabled": "window",
+            "window-focused": "window",
+            "window-blurred": "window",
+            "window-closed": "window",
+            "window-close-requested": "window",
+            "window-shown": "window",
+            "window-hidden": "window",
+            "window-minimized": "window",
+            "window-maximized": "window",
+            "window-restored": "window",
+            "window-initialized": "window"
+        };
+
+        var desktopEventToTopicAndTypeMap = {
+            "show-start-window": {topic: "system", type: "show-start-window", isUnrestricted: true},
+            "hide-start-window": {topic: "system", type: "hide-start-window", isUnrestricted: true},
+            "deskband-icon-clicked": {topic: "system", type: "deskband-icon-clicked", isUnrestricted: true},
+            "monitor-info-changed": {topic: "system", type: "monitor-info-changed"},
+            "desktop-icon-clicked": {topic: "system", type: "desktop-icon-clicked", isUnrestricted: true},
+            "idle-state-changed": {topic: "system", type: "idle-state-changed", isUnrestricted: true},
+            "session-changed": {topic: "system", type: "session-changed", isUnrestricted: true},
+            "application-not-responding": {topic: "application", type: "not-responding"},
+            "application-responding": {topic: "application", type: "responding"},
+            "application-run-requested": {topic: "application", type: "run-requested"},
+            "application-out-of-memory": {topic: "application", type: "out-of-memory"},
+            "application-crashed": {topic: "application", type: "crashed"},
+            "application-error": {topic: "application", type: "error"},
+            "application-closed": {topic: "application", type: "closed", isUnrestricted: true},
+            "application-initialized": {topic: "application", type: "initialized", isUnrestricted: true},
+            "application-started": {topic: "application", type: "started", isUnrestricted: true},
+            "application-tray-icon-clicked": {topic: "application", type: "tray-icon-clicked"},
+            "window-moved": {topic: "window", type: "moved"},
+            "window-moving": {topic: "window", type: "moving"},
+            "window-bounds-changed": {topic: "window", type: "bounds-changed"},
+            "window-bounds-changing": {topic: "window", type: "bounds-changing"},
+            "window-group-changed": {topic: "window", type: "group-changed"},
+            "window-disabled-frame-bounds-changed": {topic: "window", type: "disabled-frame-bounds-changed"},
+            "window-disabled-frame-bounds-changing": {topic: "window", type: "disabled-frame-bounds-changing"},
+            "window-frame-disabled": {topic: "window", type: "frame-disabled"},
+            "window-frame-enabled": {topic: "window", type: "frame-enabled"},
+            "window-focused": {topic: "window", type: "focused"},
+            "window-blurred": {topic: "window", type: "blurred"},
+            "window-closed": {topic: "window", type: "closed"},
+            "window-close-requested": {topic: "window", type: "close-requested"},
+            "window-shown": {topic: "window", type: "shown"},
+            "window-hidden": {topic: "window", type: "hidden"},
+            "window-minimized": {topic: "window", type: "minimized"},
+            "window-maximized": {topic: "window", type: "maximized"},
+            "window-restored": {topic: "window", type: "restored"},
+            "window-initialized": {topic: "window", type: "initialized"}
+        };
+
+        var desktopEventToTopicMatrix = {
+            window: {
+                "moved": true,
+                "moving": true,
+                "bounds-changed": true,
+                "bounds-changing": true,
+                "group-changed": true,
+                "disabled-frame-bounds-changed": true,
+                "disabled-frame-bounds-changing": true,
+                "frame-enabled": true,
+                "frame-disabled": true,
+                "focused": true,
+                "blurred": true,
+                "closed": true,
+                "minimized": true,
+                "maximized": true,
+                "restored": true,
+                "initialized": true,
+                "shown": true,
+                "hidden": true,
+                "close-requested": true
+            },
+            application: {
+                "not-responding": true,
+                "responding": true,
+                "run-requested": true,
+                "out-of-memory": true,
+                "crashed": true,
+                "error": true,
+                "closed": true,
+                "initialized": true,
+                "started": true,
+                "tray-icon-clicked": true
+            },
+            system: {
+                "show-start-window": true,
+                "hide-start-window": true,
+                "deskband-icon-clicked": true,
+                "monitor-info-changed": true,
+                "desktop-icon-clicked": true,
+                "idle-state-changed": true,
+                "session-changed": true
+            }
+        };
+
+        function doesEventExist(topic, type) {
+            return desktopEventToTopicMatrix[topic] && desktopEventToTopicMatrix[topic][type];
+        }
+
+        var desktopEventCallbackMap = {};
+
+        var deprecatedEvents = {
+            "window-moved": {
+                reason: 'This event has been deprecated by \'bounds-changed\''
+            },
+            "window-moving": {
+                reason: 'This event has been deprecated by \'bounds-changing\''
+            },
+            "moved": {
+                reason: 'This event has been deprecated by \'bounds-changed\''
+            },
+            "moving": {
+                reason: 'This event has been deprecated by \'bounds-changing\''
+            }
+        };
+
+        function clearAllEventsForApplication_impl(uuid) {
+            if (AppUuidToPropertiesMap[uuid] && AppUuidToPropertiesMap[uuid].connections) {
+                for (var nameKey in AppUuidToPropertiesMap[uuid].connections) {
+                    clearAllEventsForWindow_impl(uuid, nameKey);
+                }
+            }
+        }
+
+        clearAllEventsForApplication = clearAllEventsForApplication_impl;
+
+        function clearAllEventsForWindow_impl(uuid, name) {
+            var connectionId = getConnectionIdFromAppUuidAndWindowName(uuid, name);
+
+            if (connectionId) {
+                for (var event in desktopEventCallbackMap) {
+                    if (Array.isArray(desktopEventCallbackMap[event])) {
+                        removeFromArray(desktopEventCallbackMap[event], connectionId);
+                    } else {
+                        for (var uuidKey in desktopEventCallbackMap[event]) {
+                            if (Array.isArray(desktopEventCallbackMap[event][uuidKey])) {
+                                removeFromArray(desktopEventCallbackMap[event][uuidKey], connectionId);
+                            } else {
+                                for (var nameKey in desktopEventCallbackMap[event][uuidKey]) {
+                                    if (Array.isArray(desktopEventCallbackMap[event][uuidKey][nameKey])) {
+                                        removeFromArray(desktopEventCallbackMap[event][uuidKey][nameKey], connectionId);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        clearAllEventsForWindow = clearAllEventsForWindow_impl;
+
+        function removeFromArray(array, item) {
+            var index;
+            while ((index = array.indexOf(item)) != -1)
+                array.splice(index,1);
+        }
+
+        DesktopEvent.subscribe = function (sourceId, message) {
+            var payload = message.payload;
+            var type = payload.type;
+            var topic = payload.topic;
+
+
+            if (!doesEventExist(topic, type)) {
+                respondToMessage(sourceId, {
+                    success: false,
+                    reason: "Event " + type + " does not exist for " + topic
+                });
+                return;
+            }
+
+
+            var uuid, name;
+            var map;
+            var requestingUuid = getAppUuidByConnectionId(sourceId);
+
+            var failPayload = {
+                success: false,
+                reason: "Permission denied"
+            };
+
+            var responsePayload = {
+                success: true
+            };
+
+            var deprecateInfo = undefined;
+
+            if (isEventDeprecated(type)) {
+                deprecateInfo = {
+                    eventType: type,
+                    reason: deprecatedEvents[type].reason || "This event has been deprecated."
+                };
+                responsePayload['deprecated'] = deprecateInfo;
+            }
+
+            if (topic == "window") {
+                uuid = payload.uuid;
+                name = payload.name;
+                type = "window-" + type;
+                if (isWindowEventAllowed(requestingUuid, uuid)) {
+                    desktopEventCallbackMap[type] = desktopEventCallbackMap[type] || {};
+                    map = desktopEventCallbackMap[type];
+                    map[uuid] = map[uuid] || {};
+                    map = map[uuid];
+                    map[name] = map[name] || [];
+                    map = map[name];
+
+                    if ((type == "close-requested" && uuid == requestingUuid)
+                            || type != "close-requested") {
+                        if (map.indexOf(sourceId) == -1)
+                            map.push(sourceId);
+                    }
+                } else {
+                    responsePayload = failPayload;
+                    if (deprecateInfo) {
+                        failPayload['deprecated'] = deprecateInfo;
+                    }
+                }
+
+            } else if (topic == "application") {
+                uuid = payload.uuid;
+                type = "application-" + type;
+
+                if (isApplicationEventAllowed(requestingUuid, uuid, type)) {
+                    desktopEventCallbackMap[type] = desktopEventCallbackMap[type] || {};
+                    map = desktopEventCallbackMap[type];
+                    map[uuid] = map[uuid] || [];
+                    map = map[uuid];
+                    if (map.indexOf(sourceId) == -1) map.push(sourceId);
+                } else {
+                    responsePayload = failPayload;
+                    if (deprecateInfo) {
+                        failPayload['deprecated'] = deprecateInfo;
+                    }
+                }
+            } else if (topic == "system") {
+                if (isSystemEventAllowed(requestingUuid, type)) {
+                    desktopEventCallbackMap[type] = desktopEventCallbackMap[type] || [];
+                    map = desktopEventCallbackMap[type];
+                    if (map.indexOf(sourceId) == -1) map.push(sourceId);
+                } else {
+                    responsePayload = failPayload;
+                    if (deprecateInfo) {
+                        failPayload['deprecated'] = deprecateInfo;
+                    }
+                }
+            }
+
+            respondToMessage(sourceId, message, responsePayload);
+        };
+
+        DesktopEvent.unsubscribe = function (sourceId, message) {
+            var payload = message.payload;
+            var type = payload.type;
+            var topic = payload.topic;
+
+            if (!doesEventExist(topic, type)) {
+                respondToMessage(sourceId, {
+                    success: false,
+                    reason: "Event " + type + " does not exist for " + topic
+                });
+                return;
+            }
+
+            var uuid, name;
+            var map;
+            var index;
+            var requestingUuid = getAppUuidByConnectionId(sourceId);
+
+            var failPayload = {
+                success: false,
+                reason: "Permission denied"
+            };
+
+            var responsePayload = {
+                success: true
+            };
+
+            if (topic == "window") {
+                uuid = payload.uuid;
+                name = payload.name;
+                type = "window-" + type;
+
+                if (isWindowEventAllowed(requestingUuid, uuid)) {
+                    desktopEventCallbackMap[type] = desktopEventCallbackMap[type] || {};
+                    map = desktopEventCallbackMap[type];
+                    map[uuid] = map[uuid] || {};
+                    map = map[uuid];
+                    map[name] = map[name] || [];
+                    index = map.indexOf(sourceId);
+                    if (index != -1) map.splice(index, 1);
+                } else {
+                    responsePayload = failPayload;
+                }
+
+            } else if (topic == "application") {
+                uuid = payload.uuid;
+                type = "application-" + type;
+
+                if (isApplicationEventAllowed(requestingUuid, uuid, type)) {
+                    desktopEventCallbackMap[type] = desktopEventCallbackMap[type] || {};
+                    map = desktopEventCallbackMap[type];
+                    map[uuid] = map[uuid] || [];
+                    map = map[uuid];
+                    index = map.indexOf(sourceId);
+                    if (index != -1) map.splice(index, 1);
+                } else {
+                    responsePayload = failPayload;
+                }
+            } else if (topic == "system") {
+                if (isSystemEventAllowed(requestingUuid, type)) {
+                    desktopEventCallbackMap[type] = desktopEventCallbackMap[type] || [];
+                    map = desktopEventCallbackMap[type];
+                    index = map.indexOf(sourceId);
+                    if (index != -1) map.splice(index, 1);
+                } else {
+                    responsePayload = failPayload;
+                }
+            }
+
+            respondToMessage(sourceId, message, responsePayload);
+        };
+
+        function isWindowEventAllowed(requestingUuid, uuid) {
+            return (requestingUuid == uuid || (AppUuidToPropertiesMap[requestingUuid].isAdmin == true));
+        }
+
+        function isApplicationEventAllowed(requestingUuid, uuid, eventType) {
+            var topicAndType = desktopEventToTopicAndTypeMap[eventType];
+            return (requestingUuid == uuid || (AppUuidToPropertiesMap[requestingUuid].isAdmin == true) || (topicAndType && topicAndType.isUnrestricted == true));
+        }
+
+        function isSystemEventAllowed(requestingUuid, eventType) {
+            var topicAndType = desktopEventToTopicAndTypeMap[eventType];
+            return (AppUuidToPropertiesMap[requestingUuid].isAdmin == true) || (topicAndType && topicAndType.isUnrestricted == true);
+        }
+
+
+        function isEventDeprecated(eventName) {
+            return deprecatedEvents[eventName];
+        }
+
+        function isMainWindow(app_uuid, window_name) {
+            var isMain = false;
+            var appEntry = AppUuidToPropertiesMap[app_uuid];
+            if (appEntry) {
+                var mainWindow = appEntry.mainWindow;
+                isMain = mainWindow && mainWindow == window_name;
+            }
+            return isMain;
+        }
+
+        function getMainWindowName(app_uuid) {
+            return AppUuidToPropertiesMap[app_uuid].mainWindow;
+        }
+
+        sendDesktopEventToConnections_external =  sendDesktopEventToConnections;
+
+        function sendDesktopEventToConnections(type, message, onlyToUuid) {
+
+            console.log(type, message);
+
+            var connections;
+            var topic = desktopEventToTopicAndTypeMap[type].topic;
+            var payload = message.payload;
+            var uuid = payload.uuid;
+            var name = payload.name;
+            var outboundMessage = payload || {};
+
+
+            outboundMessage.type = desktopEventToTopicAndTypeMap[type].type;
+            outboundMessage.topic = topic;
+
+            connections = getSubscribedConnections(type, uuid, name);
+
+
+            if (topic == "window") {
+                // Fallback to using the uuid as the name if no subscription is found.
+                // This ensures backwards compatibility.
+                if (!connections && isMainWindow(uuid, name)) {
+                    outboundMessage.name = uuid;
+                }
+            }
+
+            if (connections) {
+                if (onlyToUuid) {
+                    var specificConnectionId = getSelfSubscribedConnectionIdByAppUuid(onlyToUuid);
+                    if (typeof specificConnectionId != "undefined") {
+                        // Contains this connection id
+                        if (connections.indexOf(specificConnectionId) != -1) {
+                            connections = [];
+                            connections.push(specificConnectionId);
+
+                            sendMessageToConnections(connections, {
+                                action: "process-desktop-event",
+                                payload: outboundMessage
+                            });
+                        }
+                    }
+                } else {
+                    sendMessageToConnections(connections, {
+                        action: "process-desktop-event",
+                        payload: outboundMessage
+                    });
+                }
+            }
+        }
+
+        function getSubscribedConnections(type, uuid, name) {
+
+            var connections = [];
+            var topic = desktopEventToTopicAndTypeMap[type].topic;
+
+            switch (topic) {
+                case "window":
+                    if (desktopEventCallbackMap[type]
+                            && desktopEventCallbackMap[type][uuid]) {
+                        connections = desktopEventCallbackMap[type][uuid][name];
+                        if (!connections && isMainWindow(uuid, name)) {
+                            connections = desktopEventCallbackMap[type][uuid][uuid];
+                        }
+                    }
+                    break;
+                case "application":
+                    if (desktopEventCallbackMap[type]
+                            && desktopEventCallbackMap[type][uuid])
+                        connections = desktopEventCallbackMap[type][uuid];
+                    break;
+                case "system":
+                    if (desktopEventCallbackMap[type])
+                        connections = desktopEventCallbackMap[type];
+                    break;
+                default:
+                    break;
+            }
+
+            return connections;
+        }
+
+        DesktopEvent.externalMessage = function(sourceId, message) {
+            var destinationUuid = (message || {}).uuid || "";
+            var specificConnectionId = getConnectionIdFromAppUuidAndWindowName(destinationUuid, destinationUuid);
+            if (typeof specificConnectionId != "undefined") {
+                var connections = [];
+                connections.push(specificConnectionId);
+
+                sendMessageToConnections(connections, {
+                    action: "process-external-message",
+                    payload: message.payload
+                });
+            }
+        };
+
+        DesktopEvent.connectionClosed = function (sourceId, message) {
+            var uuid = getAppUuidByConnectionId(message.connectionId);
+
+            if (uuid) {
+                if (AppUuidToPropertiesMap[uuid]) {
+                    if (AppUuidToPropertiesMap[uuid].isExternalApplication) {
+
+                        sendDesktopEventToConnections("window-closed", {
+                            action: "window-closed",
+                            payload: {
+                                uuid: uuid,
+                                name: uuid
+                            }
+                        });
+
+                        sendDesktopEventToConnections("application-closed", {
+                            action: "application-closed",
+                            payload: {
+                                uuid: uuid
+                            }
+                        });
+
+                        applicationCleanup(uuid);
+
+                        delete AppUuidToPropertiesMap[uuid];
+
+                    }
+                }
+            }
+        };
+
+        DesktopEvent.deskbandIconClicked = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.monitorInfoChanged = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.desktopIconClicked = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.showStartWindow = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.hideStartWindow = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.idleStateChanged = function (sourceId, message) {
+            var action = message.action;
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.sessionChanged = function (sourceId, message) {
+            var action = message.action;
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.applicationNotResponding = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.applicationResponding = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.applicationRunRequested = function (sourceId, message) {
+            var action = message.action;
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.applicationOutOfMemory = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.applicationCrashed = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+
+            var uuid = message.payload.uuid;
+            applicationCleanup(uuid);
+        };
+
+        DesktopEvent.applicationError = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.applicationClosed = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+            var uuid = message.payload.uuid;
+
+            if (applicationListeners[uuid] && applicationListeners[uuid]["application-closed"]) {
+                applicationListeners[uuid]["application-closed"].forEach(function (callback) {
+                    callback(uuid);
+                });
+            }
+
+            applicationCleanup(uuid);
+        };
+
+        DesktopEvent.applicationStarted = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.applicationTrayIconClicked = function (sourceId, message) {
+            var action = message.action;
+            sendDesktopEventToConnections(action, message, message.payload.uuid);
+        };
+
+        DesktopEvent.windowMoved = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowMoving = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowBoundsChanged = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowBoundsChanging = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowGroupChanged = function (sourceId, message) {
+            var action = message.action;
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowDisabledFrameBoundsChanged = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowDisabledFrameBoundsChanging = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowFrameDisabled = function (sourceId, message) {
+            sendDesktopEventToConnections(message.action, message);
+        };
+
+        DesktopEvent.windowFrameEnabled = function (sourceId, message) {
+            sendDesktopEventToConnections(message.action, message);
+        };
+
+        DesktopEvent.windowFocused = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowBlurred = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowClosed = function (sourceId, message) {
+            var action = message.action;
+            var payload = message.payload;
+
+            sendDesktopEventToConnections(action, message);
+
+            windowCleanup(payload.uuid, payload.name);
+        };
+
+        DesktopEvent.windowCloseRequested = function (sourceId, message) {
+            var payload = message.payload;
+
+            var subscribedConnections = getSubscribedConnections("window-close-requested", payload.uuid, payload.name);
+
+            if (subscribedConnections && subscribedConnections.length > 0) {
+                sendDesktopEventToConnections("window-close-requested", message);
+            } else {
+                Window.closeWindow(sourceId, {
+                    action: "close-window",
+                    payload: {
+                        force: true,
+                        uuid: payload.uuid,
+                        name: payload.name
+                    }
+                });
+            }
+        };
+
+        DesktopEvent.windowShown = function (sourceId, message) {
+            var action = message.action;
+            var payload = message.payload;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowHidden = function (sourceId, message) {
+            var action = message.action;
+            var payload = message.payload;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowMinimized = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowMaximized = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+        DesktopEvent.windowRestored = function (sourceId, message) {
+            var action = message.action;
+
+            sendDesktopEventToConnections(action, message);
+        };
+
+    })();
+
+
+    var Application = {};
+    var AppAccessGrantMap = {};  // grantor appUUID => { grantee appUUID : array of actions (wild card supported}  }
+
+    (function () {
+
+        Application.grantAccess = function (sourceId, message) {
+            var sourceUuid = getAppUuidByConnectionId(sourceId);
+            var grantee = message.payload.grantee;
+            var action = message.payload.grantAction;
+            if (sourceUuid && grantee && action) {
+                var granteeMap = AppAccessGrantMap[sourceUuid];
+                if (granteeMap == undefined) {
+                    granteeMap = {};
+                    AppAccessGrantMap[sourceUuid] = granteeMap;
+                }
+                var actionList = granteeMap[grantee];
+                if (actionList == undefined) {
+                    actionList = [];
+                    granteeMap[grantee] = actionList;
+                }
+                if (actionList.indexOf(action) == -1) {
+                    actionList.push(action);
+                    console.log('granting ' + action + ' by ' + sourceUuid + ' to ' + grantee);
+                }
+            } else {
+                console.error('invalid grant request');
+            }
+        };
+
+        Application.revokeAccess = function (sourceId, message) {
+            var sourceUuid = getAppUuidByConnectionId(sourceId);
+            var grantee = message.payload.grantee;
+            var action = message.payload.grantAction;
+            if (sourceUuid && grantee && action) {
+                var granteeMap = AppAccessGrantMap[sourceUuid];
+                if (granteeMap) {
+                    var actionList = granteeMap[grantee];
+                    if (actionList) {
+                        var i = actionList.indexOf(action);
+                        if (i >= 0) {
+                            actionList.splice(i, 1);
+                            console.log('revoking ' + action + ' by ' + sourceUuid + ' to ' + grantee);
+                        }
+                    }
+                }
+            }
+        };
+
+        /**
+         * The payload for this function should look like this:
+         * {
+         * uuid: the uuid of the application,
+         * name: id of the window
+         * }
+         */
+        Application.registerChildWindowSettings = function (sourceId, message) {
+            if (isAllowed(sourceId, message)) {
+                var payload = message.payload;
+                // Default to "about:blank" if not specified
+                payload.url = payload.url || "about:blank";
+                var name = payload.name;
+                var uuid = getAppUuidByConnectionId(sourceId);
+
+                if (uuid && AppUuidToPropertiesMap[uuid]) {
+                    if (!AppUuidToPropertiesMap[uuid]['connections'][name]) {
+                        var authorizationToken = generateAuthenticationToken();
+                        PendingAuthTokenToAppUuidMap[authorizationToken] = {
+                            uuid: uuid,
+                            name: name
+                        };
+                        payload.authorizationToken = authorizationToken;
+                        forwardExecutionRequestToDesktop(sourceId, function () {
+                            return true;
+                        }, undefined, message, "application");
+                    } else {
+                        var response = {
+                            success: false,
+                            reason: 'Window with name ' + name + ' already exists in application ' + uuid
+                        };
+                        respondToMessage(sourceId, message, response);  // If it fails, return to sender with response.
+                    }
+                } else {
+                    respondToMessage(sourceId, message, {
+                        success: false,
+                        reason: "Application with uuid " + uuid + " does not exist"
+                    });
+                }
+            } else {
+                respondToMessage(sourceId, message, {
+                    success: false,
+                    reason: 'Permission denied.'
+                });
+            }
+        };
+
+
+        Application.removeApplication = function (sourceId, message) {
+            console.log("removeApplication: HIT");
+            if (isAllowed(sourceId, message)) {
+                var options = message.payload;
+                console.log("removeApplication: access granted ", options.uuid);
+                var response;
+                if (AppUuidToPropertiesMap[options.uuid]) {
+                    if (AppUuidToPropertiesMap[options.uuid].parentAppUuid) {
+                        var parentAppUuid = AppUuidToPropertiesMap[options.uuid].parentAppUuid;
+                        if (AppUuidToPropertiesMap[parentAppUuid]) {
+                            if (AppUuidToPropertiesMap[parentAppUuid].activeChildAppCount > 0) {
+                                AppUuidToPropertiesMap[parentAppUuid].activeChildAppCount -= 1;
+                                console.log("parent ", parentAppUuid + " active child apps ", AppUuidToPropertiesMap[parentAppUuid].activeChildAppCount);
+                            }
+                        }
+                    }
+                    delete AppUuidToPropertiesMap[options.uuid];
+                    forwardExecutionRequestToDesktop(sourceId, isAllowed, 'system', message, "application");
+                    response = {
+                        success: true
+                    };
+                } else {
+                    response = {
+                        success: false,
+                        reason: 'Application with uuid ' + options.uuid + ' does not exist.'
+                    };
+                }
+                respondToMessage(sourceId, message, response);
+            } else {
+                console.error("removeApplication: denied!");
+
+                respondToMessage(sourceId, message, {
+                    success: false,
+                    reason: 'Permission denied'
+                });
+            }
+        };
+
+
+        /**
+         * The payload for each of these functions should look like this: {
+         *  uuid: the uuid of the application,
+         * }
+         */
+
+        Application.runApplication = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'application', message, "application");
+        };
+
+        Application.registerChildWindowLoadCallback = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'application', message, "application");
+        };
+
+
+        Application.closeApplication = function (sourceId, message) {
+            var payload = message.payload;
+            var force = payload.force;
+            var uuid = payload.uuid;
+            var name = uuid;
+
+            if (isAllowed(sourceId, message)) {
+                if (force) {
+                    if (AppUuidToPropertiesMap[uuid].isExternalApplication) {
+                        Window.closeWindow(sourceId, {
+                            action: "close-window",
+                            messageId: message.messageId,
+                            payload: {
+                                uuid: uuid,
+                                name: name
+                            }
+                        });
+                    } else {
+                        forwardExecutionRequestToDesktop(sourceId, isAllowed, 'application', message, "application");
+                    }
+                } else {
+                    DesktopEvent.windowCloseRequested(sourceId, {
+                        type: "window-close-requested",
+                        payload: {
+                            uuid: uuid,
+                            name: name,
+                            force: false
+                        }
+                    });
+                }
+            }
+        };
+
+        Application.restartApplication = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'application', message, "application");
+        };
+
+        Application.terminateApplication = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'application', message, "application");
+        };
+
+        Application.waitForHungApplication = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'application', message, "application");
+        };
+
+        Application.isApplicationRunning = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, 'application', message, "application");
+        };
+
+        Application.createNotification = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "application");
+        };
+
+        Application.dockWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "application");
+        };
+
+        Application.unDockWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "application");
+        };
+
+        Application.registerExternalWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "application");
+        };
+
+        Application.deregisterExternalWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "application");
+        };
+
+        Application.pingChildWindow = function (sourceId, message) {
+            if (isAllowed(sourceId, message)) {
+                var payload = message.payload;
+                Core.ping(payload.uuid, payload.name, function (pingedBefore) {
+                    respondToMessage(sourceId, message, {
+                        success: true,
+                        data: pingedBefore
+                    });
+                });
+            } else {
+                respondToMessage(sourceId, message, {
+                    success: false,
+                    reason: "Permission denied."
+                });
+            }
+        };
+
+        Application.setTrayicon = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "application");
+        };
+
+        Application.removeTrayIcon = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "application");
+        };
+
+        Application.getChildWindows = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "application");
+        };
+
+        Application.getGroups = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "application");
+        };
+
+        Application.getApplicationManifest = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "application");
+        };
+
+    })();
+
+
+    var Window = {};
+    var WindowAccessGrantMap = {};  // grantor appUUID => { grantee appUUID : { windowName (wild card supported) : array of actions (wild card supported}  }
+
+
+    (function () {
+
+        Window.grantAccess = function (sourceId, message) {
+            var sourceUuid = getAppUuidByConnectionId(sourceId);
+            var grantee = message.payload.grantee;
+            var action = message.payload.grantAction;
+            var windowName = message.payload.name;
+            if (sourceUuid && grantee && action && windowName) {
+                var granteeMap = WindowAccessGrantMap[sourceUuid];
+                if (granteeMap == undefined) {
+                    granteeMap = {};
+                    WindowAccessGrantMap[sourceUuid] = granteeMap;
+                }
+                var windowNameMap = granteeMap[grantee];
+                if (windowNameMap == undefined) {
+                    windowNameMap = {};
+                    granteeMap[grantee] = windowNameMap;
+                }
+                var actionList = windowNameMap[windowName];
+                if (actionList == undefined) {
+                    actionList = [];
+                    windowNameMap[windowName] = actionList;
+                }
+                if (actionList.indexOf(action) == -1) {
+                    actionList.push(action);
+                    console.log('granting ' + action + ' by ' + sourceUuid + ' on window ' + windowName + ' to ' + grantee);
+                }
+            }
+        };
+
+        Window.revokeAccess = function (sourceId, message) {
+            var sourceUuid = getAppUuidByConnectionId(sourceId);
+            var grantee = message.payload.grantee;
+            var action = message.payload.grantAction;
+            var windowName = message.payload.name;
+            if (sourceUuid && grantee && action && windowName) {
+                var granteeMap = WindowAccessGrantMap[sourceUuid];
+                if (granteeMap) {
+                    var windowNameMap = granteeMap[grantee];
+                    if (windowNameMap) {
+                        var actionList = windowNameMap[windowName];
+                        if (actionList) {
+                            var i = actionList.indexOf(action);
+                            if (i >= 0) {
+                                actionList.splice(i, 1);
+                                console.log('revoking ' + action + ' by ' + sourceUuid + ' on window ' + windowName + ' to ' + grantee);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+
+        Window.dispatchExternalWindowAction = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        /**
+         * The payload for each of these functions should look like this: { uuid: the uuid of the application, name: the id of the window }
+         */
+
+        Window.showWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.hideWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.closeWindow = function (sourceId, message) {
+            if (isAllowed(sourceId, message)) {
+                var uuid = getAppUuidByConnectionId(sourceId);
+                var payload = message.payload;
+                var name = payload.name;
+                var appUuid = payload.uuid;
+                var force = payload.force;
+
+                if (force || force == undefined) {
+                    // Coming from an application
+
+                    forwardExecutionRequestToDesktop(sourceId, function () {
+                        return true;
+                    }, undefined, message, "window");
+
+                    killNotifications(appUuid, name);
+
+                    if (uuid) {
+                        if (name == appUuid) {
+                            // delete all child connections
+                            var windowNames = Object.keys(AppUuidToPropertiesMap[appUuid].connections);
+                            windowNames.forEach(function (windowName) {
+                                if (name != windowName) delete AppUuidToPropertiesMap[appUuid].connections[windowName];
+                            });
+                        } else {
+                            delete AppUuidToPropertiesMap[appUuid].connections[name];
+                        }
+                    } else {
+                        delete AppUuidToPropertiesMap[appUuid].connections[name];
+                    }
+                } else {
+                    DesktopEvent.windowCloseRequested(sourceId, {
+                        type: "window-close-requested",
+                        payload: {
+                            uuid: appUuid,
+                            name: name
+                        }
+                    });
+                }
+
+            } else {
+                var response = {
+                    success: false,
+                    reason: "Permission denied."
+                };
+                respondToMessage(sourceId, message, response);
+            }
+        };
+
+        Window.minimizeWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.maximizeWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.restoreWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.focusWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, "window", message, "window");
+        };
+
+        Window.blurWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, "window", message, "window");
+        };
+
+        /**
+         * The payload for this function should look like this: {
+         * uuid: the uuid of the application,
+         * name: the id of the window
+         * top: top pos,
+         * left: left pos
+         * }
+         */
+
+        Window.showAtWindow = function (sourceId, message) {
+            var uuid = getAppUuidByConnectionId(sourceId);
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.setForegroundWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        /**
+         * The payload for this function should look like this: {
+         * uuid: the uuid of the application,
+         * name: the id of the window
+         * top: top pos,
+         * left: left pos
+         * }
+         */
+
+        Window.moveWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        /**
+         * The payload for this function should look like this: {
+         * uuid: the uuid of the application,
+         * name: the id of the window
+         * deltaTop: delta top pos,
+         * deltaLeft: delta left pos
+         * }
+         */
+        Window.moveWindowBy = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        /**
+         * The payload for this function should look like this: {
+         * uuid: the uuid of the application,
+         * name: the id of the window
+         * width: width,
+         * height: height
+         * }
+         */
+
+        Window.resizeWindow = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.resizeWindowBy = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.isWindowShowing = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+
+        Window.sendWindowToBack = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+
+        Window.bringWindowToFront = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.getState = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.getSnapshot = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.getBounds = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.getGroup = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.updateOptions = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.getOptions = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.animate = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.joinGroup = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, function (sourceId, message) {
+                var payload = message.payload;
+                return (payload.groupingWindowUuid ? payload.uuid == payload.groupingWindowUuid : true) && isAllowed(sourceId, message);
+            }, undefined, message, "window");
+        };
+
+        Window.leaveGroup = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.mergeGroups = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, function (sourceId, message) {
+                var payload = message.payload;
+                return (payload.groupingWindowUuid ? payload.uuid == payload.groupingWindowUuid : true) && isAllowed(sourceId, message);
+            }, undefined, message, "window");
+        };
+
+        Window.flash = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.disableWindowFrame = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.enableWindowFrame = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+        Window.setWindowBounds = function (sourceId, message) {
+            forwardExecutionRequestToDesktop(sourceId, isAllowed, undefined, message, "window");
+        };
+
+    })();
+
+    var Notification = {};
+
+    (function () {
+
+        Notification.dispatchNotificationEvent = function (sourceId, message) {
+            var payload = message.payload;
+            var sourceUuid = getAppUuidByConnectionId(sourceId);
+
+            if (sourceUuid == "desktopcontroller") {
+                var connectionId = getConnectionIdFromAppUuidAndWindowName(payload.destinationUuid, payload.destinationName);
+                if (typeof connectionId != "undefined") {
+                    sendMessageToConnection(connectionId, {
+                        action: "process-notification-event",
+                        payload: payload.payload
+                    });
+                } else {
+                    respondToMessage(sourceId, message, {
+                        success: false,
+                        reason: "Permission denied"
+                    });
+                }
+            } else {
+                respondToMessage(sourceId, message, {
+                    success: false,
+                    reason: "Permission denied"
+                });
+            }
+        };
+
+
+        Notification.sendActionToNotification = function (sourceId, message) {
+            var payload = message.payload;
+            var sourceUuid = getAppUuidByConnectionId(sourceId);
+
+            if (sourceUuid == "desktopcontroller") {
+                var connectionId = getConnectionIdFromAppUuidAndWindowName("desktopcontroller", payload.destinationName);
+                if (typeof connectionId != "undefined") {
+                    sendMessageToConnection(connectionId, {
+                        action: "process-action-from-notifications-center",
+                        payload: payload.payload
+                    });
+                } else {
+                    respondToMessage(sourceId, message, {
+                        success: false,
+                        reason: "Permission denied"
+                    });
+                }
+            } else {
+                respondToMessage(sourceId, message, {
+                    success: false,
+                    reason: "Permission denied"
+                });
+            }
+        };
+
+
+        Notification.sendActionToNotificationsCenter = function (sourceId, message) {
+            if (isAllowed(sourceId, message)) {
+                var connectionId = getConnectionIdFromAppUuidAndWindowName("desktopcontroller", "desktopcontroller");
+                if (connectionId) {
+                    message.payload.sourceUuid = getAppUuidByConnectionId(sourceId);
+                    message.payload.sourceName = getWindowNameByConnectionId(sourceId);
+                    sendMessageToConnection(connectionId, {
+                        action: "process-action-from-notification",
+                        payload: message.payload
+                    });
+                    respondToMessage(sourceId, message, {
+                        success: true
+                    });
+                } else {
+                    respondToMessage(sourceId, message, {
+                        success: false,
+                        reason: "Notifications center not running"
+                    });
+                }
+            }
+        };
+
+    })();
+
+    function getConnectionIdFromAppUuidAndWindowName(uuid, name) {
+        var properties = AppUuidToPropertiesMap[uuid];
+        if (properties) {
+            var connections = properties.connections;
+            if (connections) {
+                return connections[name];
+            }
+        }
+        return undefined;
+    }
+
+
+    var InterAppBus = {};
+    var DesktopSystemBus = {};
+
+    (function () {
+
+        function inArray(a, obj) {
+            for (var i = 0; i < a.length; i++) {
+                if (a[i] == obj) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+
+        (function () {
+
+            // activeMap contains all active routes registered via subscribes and validated against map
+            var DesktopSystemBusRouteMap = {
+                "system": {},
+                "application": {},
+                "window": {},
+                "message": {}
+            };
+
+            function isMapDefined() {
+                var map = arguments[0];
+                var key = arguments[1];
+                var argsArray = [].slice.apply(arguments);
+                var keyList = argsArray.slice(2, arguments.length);
+                if (map && map[key]) {
+                    if (keyList.length > 0) {
+                        return isMapDefined(map, keyList);
+                    } else {
+                        return true;
+                    }
+                } else {
+                    return false;
+                }
+            }
+
+            DesktopSystemBus.subscribe = function (sourceId, message) {
+                var payload = message.payload;
+                var topic = payload.topic;
+                var action = payload.action;
+                var receiverUuid = getAppUuidByConnectionId(sourceId);
+                var response;
+
+                console.log("DesktopSystemBus.subscribe:  message = " + JSON.stringify(message));
+                console.log("DesktopSystemBus.subscribe: receiverUuid = " + receiverUuid);
+                console.log("DesktopSystemBus.subscribe: AppUuidToPropertiesMap = " + JSON.stringify(AppUuidToPropertiesMap[receiverUuid]));
+
+                if (receiverUuid && AppUuidToPropertiesMap[receiverUuid] /*&& AppUuidToPropertiesMap[receiverUuid].systemTopics
+                 && AppUuidToPropertiesMap[receiverUuid].systemTopics.indexOf(topic) != -1*/) {
+                    console.log("subscribe ok: " + topic + ' ' + action + ' ' + sourceId);
+
+                    var dsbrm = DesktopSystemBusRouteMap;
+                    if (dsbrm[topic]) {
+                        dsbrm[topic][action] = dsbrm[topic][action] || [];
+                        if (dsbrm[topic][action].indexOf(sourceId) == -1)
+                            dsbrm[topic][action].push(sourceId);
+                    }
+
+                    response = {
+                        success: true
+                    };
+
+                } else {
+                    console.error("subscribe failed: " + topic + ' ' + action + ' ' + sourceId);
+                    response = {
+                        success: false,
+                        reason: 'Permission denied'
+                    };
+                }
+
+                respondToMessage(sourceId, message, response);
+            };
+
+            DesktopSystemBus.unsubscribe = function (sourceId, message) {
+                var payload = message.payload;
+                var topic = payload.topic;
+                var action = payload.action;
+                var receiverUuid = getAppUuidByConnectionId(sourceId);
+                var response;
+                if (receiverUuid && AppUuidToPropertiesMap[receiverUuid] && AppUuidToPropertiesMap[receiverUuid].systemTopics.indexOf(topic) != -1) {
+                    console.log("unsubscribe ok: " + topic + ' ' + action + ' ' + sourceId);
+
+
+                    var dsbrm = DesktopSystemBusRouteMap[topic];
+                    if (dsbrm && dsbrm[action]) {
+                        var index = dsbrm[action].indexOf(sourceId);
+                        if (index != -1)
+                            dsbrm[action].splice(index, 1);
+                    }
+
+                    response = {
+                        success: true
+                    };
+
+                } else {
+                    console.error("unsubscribe ok: " + topic + ' ' + action + ' ' + sourceId);
+                    response = {
+                        success: false,
+                        reason: 'Permission denied'
+                    };
+                }
+
+                respondToMessage(sourceId, message, response);
+            };
+
+            DesktopSystemBus.getDestinationConnectionIds = function (topic, action) {
+                var dsbrm = DesktopSystemBusRouteMap[topic];
+                var receivedList = [];
+                if (isMapDefined(dsbrm, "*")) {
+                    dsbrm["*"].forEach(function (receiver) {
+                        receivedList.push(receiver);
+                    });
+                }
+
+                if (isMapDefined(dsbrm, action)) {
+                    dsbrm[action].forEach(function (receiver) {
+                        if (receivedList.indexOf(receiver) == -1) {
+                            receivedList.push(receiver);
+                        }
+                    });
+                }
+
+                return receivedList;
+            };
+
+        })();
+
+
+        (function () {
+
+            function isSender(map, sender) {
+                for (var key in map) {
+                    if (key == sender) return true;
+                }
+                return false;
+            }
+
+            function insertTarget(map, target) {
+                if (!(target in map)) {
+                    map[target] = {};
+                }
+            }
+
+            function insertSender(map, sender) {
+                if (!(sender in map)) {
+                    map[sender] = [];
+                }
+            }
+
+            function insertTopic(map, topic) {
+                if (!inArray(map, topic)) {
+                    map.push(topic);
+                }
+            }
+
+            function doesRouteExist(map, sender, target, topic) {
+                return map[target] && map[target][sender] && inArray(map[target][sender], topic);
+            }
+
+            function doesRouteExist2(map, sender, target, topic) {
+
+                if (map[target]) {
+                    if (("*" in map[target]) && inArray(map[target]["*"], topic)) {
+                        return true;
+                    } else {
+                        return (map[target][sender] && inArray(map[target][sender], topic));
+                    }
+                } else {
+                    return false;
+                }
+            }
+
+            // activeMap contains all active routes registered via subscribes and validated against map
+            var activeInterAppRouteMap = {};
+
+
+            InterAppBus.subscribe = function (sourceId, message) {
+                var payload = message.payload;
+                var sender = payload.sourceUuid;
+                var target = getAppUuidByConnectionId(sourceId);
+                var topic = payload.topic;
+                var response;
+                console.log("subscribe ok: " + sender + ' ' + target + ' ' + topic);
+                insertTarget(activeInterAppRouteMap, target);
+                insertSender(activeInterAppRouteMap[target], sender);
+                insertTopic(activeInterAppRouteMap[target][sender], topic);
+                response = {
+                    success: true
+                };
+                respondToMessage(sourceId, message, response);
+                if (sender != "*") {
+                    if (AppUuidToPropertiesMap[sender]) {
+                        var senderConnectionId = AppUuidToPropertiesMap[sender].connections[sender];
+                        sendMessageToConnection(senderConnectionId, {
+                            action: "subscriber-added",
+                            payload: {
+                                uuid: target,
+                                topic: topic
+                            }
+                        });
+                    }
+                }
+            };
+
+            InterAppBus.unsubscribe = function (sourceId, message) {
+                var payload = message.payload;
+                var sender = payload.sourceUuid;
+                var target = getAppUuidByConnectionId(sourceId);
+                var topic = payload.topic;
+                var response;
+                if (doesRouteExist(activeInterAppRouteMap, sender, target, topic)) {
+                    var index = activeInterAppRouteMap[target][sender].indexOf(topic);
+                    activeInterAppRouteMap[target][sender].splice(index, 1);
+                    response = {
+                        success: true
+                    }
+                } else {
+                    response = {
+                        success: false,
+                        reason: "Subscription does not exist"
+                    };
+                }
+                respondToMessage(sourceId, message, response);
+                var senderConnectionId = AppUuidToPropertiesMap[sender].connections[sender];
+                sendMessageToConnection(senderConnectionId, {
+                    action: "subscriber-removed",
+                    payload: {
+                        uuid: target,
+                        topic: topic
+                    }
+                });
+            };
+
+            InterAppBus.publish = function (sourceId, message) {
+                var payload = message.payload;
+                var sender = getAppUuidByConnectionId(sourceId);
+                var topic = payload.topic;
+                var msg = payload.message;
+                console.log("publish::topic:" + topic + " sender:" + sender + " msg:" + msg);
+                for (var target in activeInterAppRouteMap) {
+                    console.log("publish::target " + target);
+                    if (doesRouteExist2(activeInterAppRouteMap, sender, target, topic)) {
+                        console.log("publish::sender ", sender, target, topic);
+                        forwardMessageToApp(sourceId, target, message);
+                    }
+                }
+            };
+
+
+            InterAppBus.send = function (sourceId, message) {
+                var payload = message.payload;
+                var sender = getAppUuidByConnectionId(sourceId);
+                var target = payload.destinationUuid;
+                var topic = payload.topic;
+                var msg = payload.message;
+                console.log("send::topic " + topic + " sender:" + sender + " target:" + target + " msg: " + msg);
+                if (doesRouteExist2(activeInterAppRouteMap, sender, target, topic)) {
+                    console.log("send ok:: send-message");
+                    forwardMessageToApp(sourceId, target, message);
+                    respondToMessage(sourceId, message, {
+                        success: true
+                    });
+                } else {
+                    console.error("send fail:: send-message");
+                    respondToMessage(sourceId, message, {
+                        success: false,
+                        reason: ["Application",quote(target),"not subscribed to message from",quote(sender),"on topic",quote(topic)].join(" ")
+                    });
+                }
+            }
+        })();
+    })();
+
+    function quote(str) {
+        return "'" + str + "'";
+    }
+
+    function getBaseUrl(url) {
+        url = removeQueryString(url);
+        if (url.lastIndexOf(".html") < url.lastIndexOf("/") || url.lastIndexOf("/") == url.indexOf("//") + 1) {
+            if (url.lastIndexOf("/") == url.indexOf("//") + 1) {
+            }
+            if (url[url.length - 1] != "/")
+                url += "/";
+        } else {
+            url = url.substring(0, url.lastIndexOf("/") + 1);
+        }
+
+        return url;
+    }
+
+
+    function removeQueryString(url) {
+        if (url.indexOf("?") != -1) {
+            return url.substring(0, url.lastIndexOf("?"));
+        } else {
+            return url;
+        }
+    }
+
+
+    function getCommandLineArgumentObject(callback) {
+        sendExecutionRequestToDesktop("get-command-line-arguments", {}, "system", function (commandArgs) {
+            var appUuids = parseCommandLineArgs("of-app-id", commandArgs);
+            var startupUrl = parseCommandLineArgs("startup-url", commandArgs)[0];
+
+            sendExecutionRequestToDesktop("get-config", {}, "system", function (config) {
+                var startupAppOptions;
+                if (config) {
+                    startupAppOptions = config.startup_app;
+                    if (startupAppOptions) {
+                        startupAppOptions.isAdmin = true;
+                        startupAppOptions.ofAppManifest = deepObjCopy(config);
+                    }
+                }
+                if (typeof callback == 'function') {
+                    callback({
+                        appUuids: appUuids,
+                        startupUrl: startupUrl,
+                        startupAppOptions: startupAppOptions
+                    });
+                }
+
+            }, function (error) {
+                if (typeof callback == 'function')
+                    callback(undefined);
+            });
+
+        }, function (reason) {
+            if (typeof callback == 'function')
+                callback(undefined);
+        });
+    }
+
+
+
+    function parseCommandLineArgs(token, commandArgs) {
+        commandArgs = commandArgs.replace(/^\s\s*/, '').replace(/\s\s*$/, '');
+        var appUuids = [];
+        var commandSwitch = "--";
+        var launchCommand = commandSwitch + token + "="; //commandSwitch + "of-app-id=";
+        var startIndex = 0;
+
+        while (startIndex > -1) {
+            startIndex = commandArgs.indexOf(launchCommand, startIndex);
+            // If a match was found find the end of the string
+            if (startIndex > -1) {
+                startIndex += launchCommand.length;
+                if (startIndex < commandArgs.length) {
+                    var endIndex = commandArgs.indexOf(commandSwitch, startIndex);
+
+                    // use the rest of the string if no other command line argument is found
+                    if (endIndex == -1) {
+                        endIndex = commandArgs.length ;
+                    }
+
+                    if (endIndex > startIndex) {
+                        appUuids.push(commandArgs.substr(startIndex, endIndex - startIndex).trim().replace (/(^")|("$)/g, ''));
+                    }
+
+                    startIndex = endIndex;
+                } else {
+                    startIndex = -1;
+                }
+            }
+        }
+
+        return appUuids;
+    }
+
+
+    var startupApp;
+
+    function launchStartupAppFromUrl(startupUrl) {
+        var startupUuid = "startup";
+
+        if (startupUrl) {
+            launchStartupApp({
+                uuid: startupUuid,
+                name: "Startup App",
+                url: startupUrl,
+                frame: true,
+                resizable: true,
+                autoShow: false,
+                isAdmin: true,
+                draggable: false
+            });
+        }
+    }
+
+    var applicationListeners = {};
+
+    function launchStartupApp(startupAppOptions) {
+
+        var authToken = generateAuthenticationToken();
+        startupAppOptions.authorizationToken = authToken;
+
+
+
+        PendingAuthTokenToAppUuidMap[authToken] = {
+            uuid: startupAppOptions.uuid,
+            name: startupAppOptions.uuid
+        };
+
+        AppUuidToPropertiesMap[startupAppOptions.uuid] = {
+            isAdmin: true,
+            systemTopics: startupAppOptions.systemTopics,
+            baseUrl: getBaseUrl(startupAppOptions.url),
+            uuid: startupAppOptions.uuid,
+            connections: { },
+            mainWindow: startupAppOptions.name
+        };
+
+
+        sendExecutionRequestToDesktop("create-application", startupAppOptions, "system", function () {
+            var uuid = startupAppOptions.uuid;
+            console.log("Application created: " + uuid);
+
+            // Only register for close from core if explicitly requested or controller is not present
+            if(!AppUuidToPropertiesMap["desktopcontroller"] || startupAppOptions.launchFromCore) {
+                applicationListeners[uuid] = applicationListeners[uuid] || {};
+                applicationListeners[uuid]["application-closed"] = applicationListeners[uuid]["application-closed"] || [];
+
+                applicationListeners[uuid]["application-closed"].push(function () {
+                    sendExecutionRequestToDesktop("exit-desktop", startupAppOptions, "system");
+                });
+            }
+
+            sendExecutionRequestToDesktop("run-application", {
+                uuid: uuid
+            }, "system");
+        });
+    }
+
+    function killNotifications(creatorUuid, creatorName) {
+        var sourceId = getConnectionIdFromAppUuidAndWindowName(creatorUuid, creatorName);
+
+        if(sourceId) {
+            Notification.sendActionToNotificationsCenter(sourceId, {
+                action: "send-action-to-notifications-center",
+                payload: {
+                    action: "kill-notifications",
+                    payload: {}
+                }
+            });
+        }
+    }
+
+    function applicationCleanup(uuid) {
+        killNotifications(uuid, uuid);
+        clearAllEventsForApplication(uuid);
+        removeAllApplicationConnections(uuid);
+    }
+
+    function windowCleanup(uuid, name) {
+        killNotifications(uuid, name);
+        clearAllEventsForWindow(uuid, name);
+        removeWindowConnection(uuid, name);
+    }
+
+    function removeWindowConnection(uuid, name) {
+        if (AppUuidToPropertiesMap[uuid]
+            && AppUuidToPropertiesMap[uuid].connections
+            && AppUuidToPropertiesMap[uuid].connections[name]) {
+            delete AppUuidToPropertiesMap[uuid].connections[name];
+        }
+    }
+
+    var clearAllEventsForApplication;
+    var clearAllEventsForWindow;
+
+    function removeAllApplicationConnections(uuid) {
+        if (AppUuidToPropertiesMap[uuid]) {
+            AppUuidToPropertiesMap[uuid].connections = {};
+        }
+    }
+
+
+
+})();
+
+
+</script>
+</head>
+<body></body>
+</html>

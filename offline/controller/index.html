@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>OpenFin Desktop Controller</title>
+
+<script type="text/javascript" language="javascript" src="libs/jquery-1.7.2.min.js"></script>
+<script type="text/javascript" language="javascript" src="libs/jquery.ba-tinypubsub.min.js"></script>
+<script type="text/javascript" language="javascript" src="libs/underscore-min.js"></script>
+<script type="text/javascript" language="javascript" src="libs/openfin-desktop-2.0.7.js"></script>
+
+<script src="js/drageffects.js"></script>
+<script src="js/NotificationWindow.js"></script>
+<script src="js/NotificationPool.js"></script>
+<script src="js/NotificationStack.js"></script>
+<script src="js/QueuedNotificationDisplay.js"></script>
+<script src="js/NotificationListener.js"></script>
+<script src="js/MessageRouter.js"></script>
+
+<script type="text/javascript" language="javascript">
+
+/**
+ * desktopcontroller.js
+ *
+ * Script for creating, installing and managing applications.
+ * This script serves as the interface between the Desktop and the Desktop Administration Server.
+ *
+ */
+
+fin.desktop.main(function () {
+    console.log("TIME 0: " + Date.now());
+
+    // Modified by deploy script
+    var openFinVersion = '2.0.7';
+    var openFinPathVersion = openFinVersion + '/';
+    var moduleName = 'desktopcontroller';
+
+    var START_MENU_UUID = '9a10f207-0aa0-4eb6-bb73-98bd6bfd5fea';
+
+    var loginResourceReady = _.after(2, launchController);
+    var deviceId;
+    fin.desktop.System.getDeviceId(function (data) {
+        deviceId = data;
+        loginResourceReady();
+    });
+
+    var desktopVersion;
+    fin.desktop.System.getVersion(function (data) {
+        desktopVersion = data;
+        loginResourceReady();
+    });
+
+    fin.desktop.System.log("info", 'Creating inter-application bus...');
+    var bus = new fin.desktop.InterApplicationBus();
+    var appSettingsList = []; //A list of applications and their settings
+
+    runNotificationApp();
+
+    function deepObjCopy (dupeObj) {
+        var retObj;
+        if (typeof(dupeObj) == 'object') {
+            if (Array.isArray(dupeObj))
+                retObj = [];
+            else
+                retObj = {};
+            for (var objInd in dupeObj) {
+                if (typeof(dupeObj[objInd]) == 'object') {
+                    retObj[objInd] = deepObjCopy(dupeObj[objInd]);
+                } else if (typeof(dupeObj[objInd]) == 'string') {
+                    retObj[objInd] = dupeObj[objInd];
+                } else if (typeof(dupeObj[objInd]) == 'number') {
+                    retObj[objInd] = dupeObj[objInd];
+                } else if (typeof(dupeObj[objInd]) == 'boolean') {
+                    ((dupeObj[objInd]) ? retObj[objInd] = true : retObj[objInd] = false);
+                } else if (typeof (dupeObj[objInd]) == 'function') {
+                    retObj[objInd] = dupeObj[objInd];
+                }
+            }
+        } else {
+            retObj = dupeObj;
+        }
+        return retObj;
+    }
+
+    //Special desktop applications
+    var systemNotifications; //System notifications
+    var appUuidsFromCommand; // list of app Ids passed in command line of desktop.exe
+    var launchedCommandLineApps = {}; // Keeps track of command line launched apps. After all command line launched apps have closed the desktop exits.
+    var apps = {};
+
+    function launchStartupAppFromConfig(startupAppOptions) {
+        console.warn("launchStartupAppFromConfig");
+        console.warn(startupAppOptions);
+        var launchUuid = startupAppOptions.uuid;
+        trackAppForClose(launchUuid);
+        appUuidsFromCommand = launchUuid;
+        procAppSettings([startupAppOptions]);
+    }
+
+    function launchController() {
+        function startAppFromCommandLineArgs(data) {
+            var commandArgs = (typeof data == "object"? data.commandLineArguments || "" : "");
+
+            getCommandLineArgumentObject(function (result) {
+                var appUuids = result.appUuids;
+                var startupAppOptions = result.startupAppOptions;
+                // startup_app retrieved from remote config
+                if (startupAppOptions) {
+                    if(!startupAppOptions.ofAppManifest)
+                    {
+                        startupAppOptions.ofAppManifest = deepObjCopy(result.ofAppManifest);
+                    }
+                    launchStartupAppFromConfig(startupAppOptions);
+                    // --of-app-id specified
+                } else if(Array.isArray(appUuids) && appUuids.length > 0) {
+                    appUuids.forEach(function(uuid) {
+                        // Track this app and close the desktop when no more command line apps are running
+                        trackAppForClose(uuid);
+
+                        fin.desktop.System.log('info', "launching app: " + uuid);
+                        retrieveAppSettingsByUuid(uuid, function() {}, function(){});
+                    });
+                    // Nothing defined
+                } else {
+                    // Launch start menu if icon is clicked with no params.
+                    isStartMenuRunning(function(running){
+                        // Show start menu if app is already running
+                        if(running) {
+                            fin.desktop.System.showStartWindow();
+                        } else {
+                            // Track this app and close the desktop when no more command line apps are running
+                            trackAppForClose(START_MENU_UUID);
+
+                            // Start the app
+                            retrieveAppSettingsByUuid(START_MENU_UUID, function() {}, function(){});
+                        }
+                    });
+                }
+            }, commandArgs);
+        };
+
+        fin.desktop.System.addEventListener('desktop-icon-clicked', startAppFromCommandLineArgs);
+        fin.desktop.InterApplicationBus.subscribe("*", "start-commandline-app", startAppFromCommandLineArgs);
+        launchStartupApp();
+    }
+
+    function isStartMenuRunning(callback) {
+        function invokeCallback(isRunning) {
+            if(typeof callback == 'function') {
+                callback(isRunning);
+            }
+        }
+
+        // Get running state of all registered applications
+        fin.desktop.System.getAllApplications(function(appArray){
+            var isRunning = false;
+
+            // If the start menu exists, sort it to the front
+            appArray.sort(function(val1, val2){
+                return (val1.uuid == START_MENU_UUID?
+                        -1
+                        :
+                        (val2.uuid == START_MENU_UUID?
+                                1
+                                :
+                                0));
+            });
+
+            // Check the front of the array for the start menu and use its running state if so.
+            if(appArray.length && appArray[0].uuid == START_MENU_UUID) {
+                isRunning = appArray[0].isRunning;
+            }
+
+            invokeCallback(isRunning);
+        // In case of error
+        }, function() {
+            invokeCallback(false);
+        });
+    }
+
+    function trackAppForClose(uuid) {
+        launchedCommandLineApps[uuid] = true;
+        var app = fin.desktop.Application.wrap(uuid);
+        app.addEventListener("closed", function () {
+            // Keep track of running command line launched apps for desktop exit
+            delete launchedCommandLineApps[uuid];
+
+            // Close desktop if no command line apps are running
+            if(!Object.keys(launchedCommandLineApps).length) {
+                fin.desktop.System.exit();
+            }
+        });
+    }
+
+    function launchStartupApp() {
+        getCommandLineArgumentObject(function (result) {
+            if(result.startupAppOptions) {
+                var options = result.startupAppOptions || {};
+                if(!options.ofAppManifest)
+                {
+                    options.ofAppManifest = deepObjCopy(result.ofAppManifest);
+                }
+
+                launchStartupAppFromConfig(options);
+            } else if (!result.startupAppOptions && !result.startupUrl) {
+                if (result.appUuids && result.appUuids.length > 0) {
+                    appUuidsFromCommand = result.appUuids;
+                } else {
+                    appUuidsFromCommand = [START_MENU_UUID];
+                }
+
+                appUuidsFromCommand.forEach(function (uuid) {
+                    trackAppForClose(uuid);
+                });
+
+                fin.desktop.System.log("info", "startup app " + appUuidsFromCommand);
+
+                launchStartupAppFromUuid();
+            }
+        });
+    }
+
+    function launchStartupAppFromUuid() {
+        createSystemNotifications();
+
+        fin.desktop.System.addEventListener('monitor-info-changed', function (monitorMsg) {
+            fin.desktop.System.log("info", "Monitor Info Changed: " + JSON.stringify(monitorMsg));
+                var monitorInfo = monitorMsg;
+                adjustSystemNotification(monitorInfo);
+            });
+
+        bus.subscribe('*', 'invoke-application', function (msg) {
+            fin.desktop.System.log("info", "invoke" + JSON.stringify(msg));
+            retrieveAppSettingsByUuid(msg.uuid, function() {},
+                    function () {
+                    }
+            );
+        });
+
+        bus.subscribe('*', 'post-activity', function (msg) {
+            fin.desktop.System.log("info", "post-activity" + JSON.stringify(msg));
+            postActivity(msg);
+        });
+
+        bus.subscribe('*', 'show-quick-loading-status', function (msg) {
+            console.log("show-quick-loading-status: " + JSON.stringify(msg));
+            setLoadStatus(msg.status);
+        });
+
+        setLoadStatus('Connecting...');
+        var authPayload = {
+            userAgent: window.navigator.userAgent,
+            desktopVersion: desktopVersion
+        };
+        $.ajax({
+           url: '/services/api/devices/' + deviceId + '/register',
+           type: 'POST',
+           data: JSON.stringify(authPayload),
+           contentType:"application/json; charset=utf-8",
+           dataType:"json",
+           success: function(response){
+               setLoadStatus('Successfully connected.');
+               $.ajaxSetup({
+                   beforeSend: function (xhr) {
+                       xhr.setRequestHeader('X-CSRF-Token',
+                               $('meta[name="csrf-token"]').attr('content'));
+                   }
+               });
+
+               retrieveAppSettingsByUuid(appUuidsFromCommand, function() {},
+                   function () {
+                       fin.desktop.System.log("info", "Error retrieving startup app info, Exiting");
+                       fin.desktop.System.exit();
+               });
+           },
+           error: function() {
+
+           }
+         });
+
+    }
+
+    function getCommandLineArgumentObject(callback, commandArgsOverride) {
+        // Defined outside of handleCommandLineArgs closure for use inside custom configHandler
+        var startupUrl = "";
+
+        function getAppSettingsFromRemoteConfig(callback) {
+            // Retrieve the remote config
+            fin.desktop.System.getRemoteConfig(startupUrl, function(data) {
+                fin.desktop.System.log("info", JSON.stringify(data));
+                if (typeof callback == 'function') {
+                    callback(data);
+                }
+            }, function() {
+                fin.desktop.System.log("error", "Error retrieving remote config for " + startupUrl);
+                if (typeof callback == 'function') {
+                    callback({});
+                }
+            });
+        }
+
+        function handleCommandLineArgs(commandArgs, configHandler) {
+            var appUuids = parseCommandLineArgs("of-app-id", commandArgs);
+            // Defined outside of closure
+            startupUrl = parseCommandLineArgs("startup-url", commandArgs)[0];
+
+            (startupUrl? getAppSettingsFromRemoteConfig : configHandler)(function (config) {
+                var startupAppOptions;
+                var ofAppManifest;
+                if (config) {
+                    ofAppManifest = deepObjCopy(config);
+                    startupAppOptions = config.startup_app;
+                    if (startupAppOptions) {
+                        startupAppOptions.isAdmin = true;
+                        startupAppOptions.ofAppManifest = ofAppManifest;
+                    }
+                }
+                if (typeof callback == 'function') {
+                    callback({
+                        appUuids: appUuids,
+                        startupUrl: startupUrl,
+                        startupAppOptions: startupAppOptions,
+                        ofAppManifest: ofAppManifest
+                    });
+                }
+
+            }, function (error) {
+                if (typeof callback == 'function')
+                    callback(undefined);
+            });
+        }
+
+        if(!commandArgsOverride) {
+            fin.desktop.System.getCommandLineArguments(function (commandArgs) {
+                handleCommandLineArgs(commandArgs, fin.desktop.System.getConfig);
+            }, function (reason) {
+                if (typeof callback == 'function')
+                    callback(undefined);
+            });
+        } else {
+            handleCommandLineArgs(commandArgsOverride, getAppSettingsFromRemoteConfig);
+        }
+    }
+
+
+
+    var startupApp;
+
+//    function launchStartupAppFromUrl(startupUrl) {
+//        var startupUuid = "startup";
+//
+//        if (startupUrl) {
+//            startupApp = new fin.desktop.Application({
+//                uuid: startupUuid,
+//                name: "Startup App",
+//                url: startupUrl,
+//                frame: true,
+//                resizable: true,
+//                autoShow: false,
+//                isAdmin: true,
+//                draggable: false
+//            }, function () {
+//                console.log("Launching startup app");
+//
+//                startupApp.addEventListener("closed", function () {
+//                    fin.desktop.System.exit();
+//                });
+//
+//                startupApp.run();
+//            });
+//        }
+//    }
+//
+//    function launchStartupAppFromConfigOptions(startupAppOptions) {
+//        startupApp = new fin.desktop.Application(startupAppOptions, function () {
+//            console.log("Launching startup app");
+//
+//            startupApp.addEventListener("closed", function () {
+//                fin.desktop.System.exit();
+//            });
+//
+//            startupApp.run();
+//        });
+//    }
+
+
+    function createSystemNotifications(callback) {
+
+        fin.desktop.System.getMonitorInfo(function (monitorInfo) {
+            var defaultTop = 10, defaultLeftBase = screen.width;
+
+            if (monitorInfo.primaryMonitor && monitorInfo.primaryMonitor.availableRect) {
+                defaultTop += monitorInfo.primaryMonitor.availableRect.top;
+                defaultLeftBase = monitorInfo.primaryMonitor.availableRect.right;
+            }
+            var defaultRight = defaultLeftBase - 348 - 10;
+
+            systemNotifications = new fin.desktop.Window({
+                name: "systemnotification",
+                url: location.href.replace('index.html', 'systemnotification/index.html'),
+                defaultWidth: 348,
+                defaultHeight: 68,
+                defaultTop: defaultTop,
+                defaultLeft: defaultRight,
+                frame: false,
+                resizable: false,
+                autoShow: false,
+                alwaysOnTop: true,
+                showTaskbarIcon: false
+            }, function () {
+                console.log("TIME 2: " + Date.now());
+                if (callback) callback();
+            });
+
+        });
+
+    }
+
+    function hasAppUUidsFromCommand() {
+        return appUuidsFromCommand && Array.isArray(appUuidsFromCommand) && appUuidsFromCommand.length > 0;
+    }
+
+    function retrieveAppSettingsByUuid(appUuid, callback, errorCallback) {
+        fin.desktop.System.log("info", "retrieveAppSettingsByUuid " + appUuid);
+        $.ajax({
+           url: '/services/api/my/apps/' + appUuid,
+           type: 'GET',
+           contentType:"application/json; charset=utf-8",
+           dataType:"json",
+           success: function(data){
+            fin.desktop.System.log("info", JSON.stringify(data));
+            if (Array.isArray(data)) {
+                procAppSettings(data);
+                if (callback) callback();
+            } else if (data.status == "error" && errorCallback) {
+                // Need to show modal dialog window here
+                if (errorCallback) errorCallback();
+            }
+           },
+           error: function() {
+               fin.desktop.System.log("error", "Error retrieveAppSettingsByUuid " + appUuid);
+             }
+         });
+
+    }
+
+    function parseCommandLineArgs(token, commandArgs) {
+        commandArgs = commandArgs.replace(/^\s\s*/, '').replace(/\s\s*$/, '');
+        var appUuids = [];
+        var commandSwitch = "--";
+        var launchCommand = commandSwitch + token + "="; //commandSwitch + "of-app-id=";
+        var startIndex = 0;
+
+        while (startIndex > -1) {
+            startIndex = commandArgs.indexOf(launchCommand, startIndex);
+            // If a match was found find the end of the string
+            if (startIndex > -1) {
+                startIndex += launchCommand.length;
+                if (startIndex < commandArgs.length) {
+                    var endIndex = commandArgs.indexOf(commandSwitch, startIndex);
+
+                    // use the rest of the string if no other command line argument is found
+                    if (endIndex == -1) {
+                        endIndex = commandArgs.length ;
+                    }
+
+                    if (endIndex > startIndex) {
+                        appUuids.push(commandArgs.substr(startIndex, endIndex - startIndex).trim().replace (/(^")|("$)/g, ''));
+                    }
+
+                    startIndex = endIndex;
+                } else {
+                    startIndex = -1;
+                }
+            }
+        }
+
+        return appUuids;
+    }
+
+    function parseCommandLineArgsForAppIds(commandArgs) {
+        return parseCommandLineArgs("of-app-id", commandArgs);
+    }
+
+    function procAppSettings(data) {
+        if (Array.isArray(data)) {
+            var settingsList = camelize(data);
+            fin.desktop.System.log("info", JSON.stringify(settingsList));
+            console.log(settingsList);
+            if (settingsList.length > 0) {
+                createAndLaunchApps(settingsList);
+            }
+        }
+    }
+
+    function createAndLaunchApps(settingsList) {
+        settingsList.forEach(function (appSettings) {
+
+            if (appSettings.uuid == "e13d3594-19b3-45e8-ac6f-f140194145b9") {
+                appSettings.hideWhileChildrenVisible = true;
+            }
+
+            createAndLaunchApp(appSettings);
+
+            var found = false;
+            appSettingsList.forEach(function (el) {
+                if (el.uuid == appSettings.uuid) {
+                    found = true;
+                }
+            });
+            if (found == false) {
+                appSettingsList.push(appSettings);
+            }
+            console.log('appSettingsList.length ' + appSettingsList.length);
+        });
+
+    }
+
+    function createAndLaunchApp(appSettings) {
+        var callback = function () {
+            console.log("Launching app: " + appSettings.uuid);
+            apps[appSettings.uuid].run();
+
+            postActivity({name:'start', applicationUuid: appSettings.uuid});
+        };
+
+        if (apps[appSettings.uuid] == undefined) {
+            if (appSettings.uuid == "e4ce2f81-e2bf-468e-bba3-46908c9b6319") {
+                appSettings.isAdmin = true;
+            }
+            if (appSettings.uuid == "70094bcc-71c8-4641-bec5-c3e358fff666" || appSettings.uuid == "e8654b73-d06d-4989-99b8-83414b5cf4ae" ||
+                    appSettings.uuid == "e4ce2f81-e2bf-468e-bba3-46908c9b6319") {
+                appSettings.isAdmin = true;
+            }
+
+            if (appSettings.uuid == appUuidsFromCommand) {
+                appSettings.isEnabled = true;  // always starts launcher app
+
+                if (typeof appSettings.autoShow !== 'boolean') {
+                    appSettings.autoShow = true;
+                }
+            }
+
+            if (appUuidsFromCommand.indexOf(appSettings.uuid) != -1) {
+                appSettings.isAdmin = true; // Force isAdmin
+            }
+
+            if (appSettings.name == 'OpenFin Startup Menu'
+                    || appSettings.uuid == START_MENU_UUID) {
+                appSettings.showTaskbarIcon = false;
+                appSettings.isAdmin = true;
+                appSettings.opacity = 0.0;
+                appSettings.autoShow = false;
+                // Shim the correct version into the URL
+                appSettings.url = "https://demoappdirectory.openf.in/desktop/deskbandmenu/" + openFinVersion + "/index.html";
+            }
+
+            apps[appSettings.uuid] = new fin.desktop.Application(appSettings, callback, callback);
+        } else {
+            callback.call(window);
+        }
+    }
+
+
+    function adjustSystemNotification(monitorInfo) {
+        var defaultTop = 10, defaultLeftBase = screen.width;
+        if (monitorInfo.primaryMonitor && monitorInfo.primaryMonitor.availableRect) {
+            defaultTop += monitorInfo.primaryMonitor.availableRect.top;
+            defaultLeftBase = monitorInfo.primaryMonitor.availableRect.right;
+        }
+        var defaultRight = defaultLeftBase - 348 - 10;
+        systemNotifications.moveTo(defaultRight, defaultTop);
+    }
+
+
+    //utility function to publish messages to the system notifications app
+    function setLoadStatus(msg) {
+        fin.desktop.System.log("info", msg);
+        if (systemNotifications && systemNotifications.getNativeWindow()) {
+            interWindowBus.send(systemNotifications.getNativeWindow(), 'show-quick-loading-status', msg);
+        }
+    }
+
+    function postActivity(msg) {
+        var me = this;
+        $.ajax({
+           url: '/services/api/devices/' + deviceId + '/activity',
+           type: 'POST',
+           data: JSON.stringify(msg),
+           contentType:"application/json; charset=utf-8",
+           dataType:"json",
+           success: function(response){
+             },
+           error: function() {
+               fin.desktop.System.log("error", 'error postActivity');
+             }
+         });
+
+    }
+
+});
+
+var NOTIFICATION_WIDTH = 300;
+var NOTIFICATION_HEIGHT = 80;
+var QUEUE_COUNTER_WIDTH = NOTIFICATION_WIDTH;
+var QUEUE_COUNTER_HEIGHT = 19;
+var NOTIFICATION_ITEM_SPACING = 10;
+var ns;
+
+function runNotificationApp() {
+    console.log("Running notification app");
+    console.log("Get monitor info");
+    fin.desktop.System.getMonitorInfo(function (evt) {
+        console.log("event registered");
+        var monitorInfo = evt;
+        var monitorAvailableRect = monitorInfo.primaryMonitor.availableRect;
+        console.log(monitorAvailableRect);
+
+        var pos = {
+            left: monitorAvailableRect.right - NOTIFICATION_WIDTH - 10,
+            top: monitorAvailableRect.bottom - 10 - QUEUE_COUNTER_HEIGHT
+        };
+
+        ns = new NotificationStack({
+            left: pos.left,
+            top: pos.top,
+            vDirection: "up",
+            interval: 50,
+            max: Math.min((pos.top - monitorAvailableRect.top) / (NOTIFICATION_HEIGHT + NOTIFICATION_ITEM_SPACING), 5),
+            ttl: 6000,
+            itemSpacing: NOTIFICATION_ITEM_SPACING
+        });
+
+        MessageRouter.initialize();
+    });
+
+
+    fin.desktop.System.addEventListener('monitor-info-changed', function (monitorMsg) {
+        if (ns) {
+            var primary_available = monitorMsg.primaryMonitor.availableRect;
+
+
+            var pos = {
+                left: primary_available.right - NOTIFICATION_WIDTH - 10,
+                top: primary_available.bottom - 10 - QUEUE_COUNTER_HEIGHT
+            };
+
+            ns.updatePosition({
+                top: pos.top,
+                left: pos.left,
+                max: Math.min((pos.top - primary_available.top) / (NOTIFICATION_HEIGHT + NOTIFICATION_ITEM_SPACING), 5)
+            });
+        }
+    });
+}
+
+
+var interWindowBus = (function () {
+    var bus = {};
+    var callbacks = {};
+
+    bus.subscribe = function (sender, topic, callback) {
+        console.log("Subscribe: ", sender, topic, callback);
+        sender = sender.name;
+        callbacks[sender] = callbacks[sender] || {};
+        callbacks[sender][topic] = callbacks[sender][topic] || [];
+        callbacks[sender][topic].push(callback);
+    };
+
+    bus.send = function (targetWindow, topic, message) {
+        console.log("sending: ", targetWindow, topic, message);
+        if (targetWindow._dispatchMessage) {
+            targetWindow._dispatchMessage(topic, message);
+        } else {
+            targetWindow.addEventListener('onload', function() {
+                targetWindow._dispatchMessage(topic, message);
+            })
+        }
+    };
+
+    window._dispatchMessage = function (sender, topic, message) {
+        console.log("Dispatch: ", sender, topic, message);
+        sender = sender.name;
+
+        var array = callbacks[sender][topic];
+
+        if (array) {
+            for (var i = 0; i < array.length; i++) {
+                array[i](message);
+            }
+        }
+    };
+
+    return bus;
+})();
+
+
+function camelize(dataArray) {
+    fin.desktop.System.log("info", 'camelizing data');
+    var array = [];
+    dataArray.forEach(function (element) {
+        var obj = {};
+
+        for (var key in element) {
+            obj[$.camelCase(key.replace(/_/g, '-'))] = element[key];
+        }
+
+        array.push(obj);
+    });
+
+    return array;
+}
+
+
+</script>
+
+</head>
+<body>
+
+</body>
+</html>

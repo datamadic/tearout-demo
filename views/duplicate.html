@@ -1,0 +1,150 @@
+<!doctype html>
+<html>
+	<head>
+		<link rel="stylesheet" href="../css/tearout.css">
+		<style>
+			body {
+				overflow: hidden;
+				/*-webkit-app-region: drag;*/
+				/*background-color: steelblue;*/
+				background-color: indianred;
+			}
+			div {
+				-webkit-app-region: drag;
+				pointer-events: all;
+			}
+		</style>
+	</head>
+	<body>
+
+		<div class="tearout indianred" draggable="false"></div>
+
+		<script src="../js/desktop-adapter.js"></script>
+		<script>
+			fin.desktop.main(function() {
+			    'use strict';
+
+			    var moveOnDrag, offsetX, offsetY;
+
+			    window.addEventListener('mousemove', function(e) {
+			    	if (moveOnDrag){
+			    		fin
+			    			.desktop
+			    			.Window
+			    			.getCurrent()
+								//.moveTo(e.screenX - offsetX, e.screenY - offsetY);
+			    	}
+			        //console.warn('this is a mouse move event', e);
+			    });
+			    document.querySelector('div')
+			    //window
+			    	.addEventListener('mousedown',function(e){
+			    		// offsetX = e.offsetX;
+			    		// offsetY = e.offsetY;
+			    		console.log('its down',e)
+			    		document.querySelector('div').style.cssText = '-webkit-app-region: drag';
+			    	})
+			    //document.querySelector('div')
+			    window
+			    	.addEventListener('mouseup',function(){
+			    		console.log('its down')
+			    	})
+			    // //document.querySelector('div')
+			    window
+			    window
+			    	.addEventListener('mousemove',function(){
+			    		console.log('its moving')
+			    	})
+			    //document.querySelector('div')
+			    //window
+			    document.body
+			    	.addEventListener('dragstart',function(e){
+			    		//moveOnDrag = false;
+			    		console.log('its a drag', e)
+			    	})
+			    document.querySelector('body')
+			    	.addEventListener('dragstart',function(e){
+			    		//moveOnDrag = false;
+			    		console.log('its a drag', e)
+			    	})
+
+			  //   var wnd = fin.desktop.Window.getCurrent();
+					// wnd.addEventListener("shown", function (event) {
+					//     console.log("The window has been moved or resized");
+
+					//     var event = new MouseEvent('mousedown', {
+					// 	    // 'view': window,
+					// 	    // 'bubbles': true,
+					// 	    // 'cancelable': true
+
+
+					// 			altKey: false,
+					// 			bubbles: true,
+					// 			button: 0,
+					// 			cancelBubble: false,
+					// 			cancelable: true,
+					// 			charCode: 0,
+					// 			clientX: 64,
+					// 			clientY: 178,
+					// 			clipboardData: undefined,
+					// 			ctrlKey: false,
+					// 			currentTarget: null,
+					// 			dataTransfer: null,
+					// 			defaultPrevented: false,
+					// 			detail: 1,
+					// 			eventPhase: 0,
+					// 			fromElement: null,
+					// 			keyCode: 0,
+					// 			layerX: 64,
+					// 			layerY: 178,
+					// 			metaKey: false,
+					// 			offsetX: 45,
+					// 			offsetY: 92,
+					// 			pageX: 64,
+					// 			pageY: 178,
+					// 			relatedTarget: null,
+					// 			returnValue: true,
+					// 			screenX: 1184,
+					// 			screenY: 255,
+					// 			shiftKey: false,
+					// 			srcElement: document.querySelector('div'),
+					// 			target: document.querySelector('div'),
+					// 			timeStamp: 1410353773330,
+					// 			toElement: document.querySelector('div'),
+					// 			type: "mousedown",
+					// 			view: Window,
+					// 			webkitMovementX: 0,
+					// 			webkitMovementY: 0,
+					// 			which: 1,
+					// 			x: 64,
+					// 			y: 178
+					// 	  });
+					// 		document.querySelector('div').dispatchEvent(event)
+					// 	  // var cb = //document.querySelector('div'); 
+					// 	  // window
+					// 	  // var canceled = !cb.dispatchEvent(event);
+					// 	  // if (canceled) {
+					// 	  //   // A handler called preventDefault.
+					// 	  //   //alert("canceled");
+					// 	  // } else {
+					// 	  //   // None of the handlers called preventDefault.
+					// 	  //   //alert("not canceled");
+					// 	  // }
+
+					// }, function () {
+					//     console.log("The registration was successful");
+					// },function (reason) {
+					//     console.log("failure:" + reason);
+					// });
+
+			    window.addEventListener('mousemove', function(e) {
+			        console.warn('this is a mouse move event', e);
+			    });
+			    window.addEventListener('mouseup', function(e) {
+			        console.warn('this is a mouse up event', e);
+			    });
+			});
+		</script>
+		<!-- <script src="js/tearout.js"></script> -->
+	</body>
+</html>
