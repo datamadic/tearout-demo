@@ -14,6 +14,83 @@ var duplicateElementWindowConfig = {
     'resizable': false
 };
 
+
+
+var initDragWithoutGhost = function(element, dropWindow) {
+    'use strict';
+
+    var me = {
+            currentlyDragging: false,
+            offsetX: 0,
+            offsetY: 0,
+            element: element,
+            dropWindow: dropWindow
+        },
+        dragTarget = element.setCapture ? element : document;
+
+    me.setOffsetX = function(x) {
+        me.offsetX = x;
+        return me;
+    };
+    me.setOffsetY = function(y) {
+        me.offsetY = y;
+        return me;
+    };
+    me.getOffsetX = function() {
+        return me.offsetX;
+    };
+    me.getOffsetY = function() {
+        return me.offsetY;
+    };
+    me.setCurrentlyDragging = function(dragging) {
+        me.currentlyDragging = dragging;
+        return me;
+    };
+    me.getCurrentlyDragging = function() {
+        return me.currentlyDragging;
+    };
+    me.setElementCapture = function() {
+        if (me.element.setCapture) {
+            me.element.setCapture();
+        }
+        return me;
+    };
+    me.moveDropTarget = function(x, y) {
+        me.dropWindow.moveTo(x, y);
+        return me;
+    };
+    me.displayDropTarget = function() {
+        me.dropWindow.show();
+        me.dropWindow.setAsForeground();
+        return me;
+    };
+
+    /*
+		Mouse Event Handlers
+    */
+    me.handleMouseDown = function(e) {
+        me.setCurrentlyDragging(true)
+            .setElementCapture()
+            .setOffsetX(e.offsetX)
+            .setOffsetY(e.offsetY)
+            .moveDropTarget(e.screenX - e.offsetX, e.screenY - e.offsetY)
+            .displayDropTarget();
+    };
+    me.handleMouseMove = function(e) {
+        if (me.currentlyDragging) {
+            me.moveDropTarget(e.screenX - me.getOffsetX(), e.screenY - me.getOffsetY());
+        }
+    };
+    me.handleMouseUp = function() {
+        me.currentlyDragging = false;
+    };
+
+    element.addEventListener('mousedown', me.handleMouseDown);
+    dragTarget.addEventListener('mousemove', me.handleMouseMove, true);
+    dragTarget.addEventListener('mouseup', me.handleMouseUp, true);
+
+};
+
 var initDuplicateDrag = function() {
     'use strict';
 
@@ -26,6 +103,8 @@ var initDuplicateDrag = function() {
         offsetX, offsetY;;
 
     dragElement.addEventListener('mousedown', function(e) {
+        // newWindow.show();
+        // newWindow.setAsForeground();
         e = window.event || e;
         offsetX = e.offsetX;
         offsetY = e.offsetY;
@@ -42,15 +121,26 @@ var initDuplicateDrag = function() {
     dragElement.addEventListener('losecapture', function(e) {
         dragging = null;
     });
+    dragElement.addEventListener('drag', function(e) {
+        console.log('drag ', e);
+        //newWindow.moveTo(e.screenX - offsetX, e.screenY - offsetY);
+        //dragging = null;
+    });
+    dragElement.addEventListener('dragstart', function(e) {
+        console.log('drag ', e);
+        e.dataTransfer.effectAllowed = 'copy'; //.dropEffect = 'move';
+        //newWindow.moveTo(e.screenX - offsetX, e.screenY - offsetY);
+        //dragging = null;
+    });
 
-    document.addEventListener('mouseup', function(e) {
-        console.log('this is the up event', e, e.screenX - e.offsetX, e.screenY - e.offsetY);
-        newWindow.moveTo(e.screenX - offsetX, e.screenY - offsetY);
-        newWindow.show();
-        // newWindow.bringToFront();
-        newWindow.setAsForeground();
-        dragging = null;
-    }, true);
+    // document.addEventListener('mouseup', function(e) {
+    //     console.log('this is the up event', e, e.screenX - e.offsetX, e.screenY - e.offsetY);
+    //     newWindow.moveTo(e.screenX - offsetX, e.screenY - offsetY);
+    //     //newWindow.show();
+    //     // newWindow.bringToFront();
+    //     newWindow.setAsForeground();
+    //     dragging = null;
+    // }, true);
 
     document.addEventListener('dragend', function(e) {
         console.log('this is the up event', e, e.screenX - e.offsetX, e.screenY - e.offsetY);
@@ -66,56 +156,16 @@ var initDuplicateDrag = function() {
     dragTarget.addEventListener('mousemove', function(e) {
         if (dragging) {
             console.log(e);
+            //newWindow.moveTo(e.screenX - offsetX, e.screenY - offsetY);
         }
-
-        // if (!dragging) return;
-
-        // var e = window.event || e;
-        // var top = dragging.startY + (e.clientY - dragging.mouseY);
-        // var left = dragging.startX + (e.clientX - dragging.mouseX);
-
-        // dragElement.style.top = (Math.max(0, top)) + "px";
-        // dragElement.style.left = (Math.max(0, left)) + "px";
     }, true);
-    //};
 
-    //draggable(document.getElementById("drag"));
-
-    // console.log(dragElement);
-    // dragElement.addEventListener('mousedown', function(e) {
-    //     console.log('hte event', e);
-
-    //     newWindow.moveTo(e.screenX - e.offsetX, e.screenY - e.offsetY);
-    //     newWindow.show();
-    //     // newWindow.bringToFront();
-    //     newWindow.setAsForeground();
-
-    //     console.log('this is the new windwo', newWindow);
-
-    //     var evt = document.createEvent("MouseEvents");
-    //     evt.initMouseEvent("mousedown", true, true, window,
-    //         0, 0, 0, 0, 0, false, false, false, false, 0, null);
-    //     newWindow.contentWindow.window.document.querySelector('div').dispatchEvent(evt);
-
-    // }, false);
-    // dragElement.addEventListener('mouseup', function(e) {
-    //     console.log('uppers', e);
-
-    // }, false);
-    // dragElement.addEventListener('drag', function(e) {
-    //     //console.log('drag event', e);
-    // });
-    // dragElement.addEventListener('dragend', function(e) {
-    //     //console.log('end event', e);
-    // });
-    // // window.addEventListener('mousemove', function(e) {
-    // //     console.warn('this is a mouse move event', e);
-    // // });
 };
 
 var initDragDemo = function() {
     console.log('from the main');
-    initDuplicateDrag();
+    //initDuplicateDrag();
+    initDragWithoutGhost(document.querySelector('.gold'), new fin.desktop.Window(duplicateElementWindowConfig));
 };
 
 fin.desktop.main(function() {
