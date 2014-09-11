@@ -5,68 +5,101 @@
 		<style>
 			body {
 				overflow: hidden;
-				/*-webkit-app-region: drag;*/
+				margin: 0;
+				-webkit-app-region: drag;
 				/*background-color: steelblue;*/
-				background-color: indianred;
+				
 			}
 			div {
-				-webkit-app-region: drag;
+				/*-webkit-app-region: drag;*/
 				pointer-events: all;
+				background-color: indianred;
 			}
 		</style>
 	</head>
 	<body>
 
-		<div class="tearout indianred" draggable="false"></div>
+		<!-- <div class="tearout indianred" draggable="true"></div> -->
 
 		<script src="../js/desktop-adapter.js"></script>
 		<script>
 			fin.desktop.main(function() {
 			    'use strict';
 
-			    var moveOnDrag, offsetX, offsetY;
+			    var origionalLocationInParent,
+			    		parentWindow = fin.desktop.Window.getCurrent().getParentWindow();
 
-			    window.addEventListener('mousemove', function(e) {
-			    	if (moveOnDrag){
-			    		fin
-			    			.desktop
-			    			.Window
-			    			.getCurrent()
-								//.moveTo(e.screenX - offsetX, e.screenY - offsetY);
-			    	}
-			        //console.warn('this is a mouse move event', e);
-			    });
-			    document.querySelector('div')
-			    //window
-			    	.addEventListener('mousedown',function(e){
-			    		// offsetX = e.offsetX;
-			    		// offsetY = e.offsetY;
-			    		console.log('its down',e)
-			    		document.querySelector('div').style.cssText = '-webkit-app-region: drag';
-			    	})
-			    //document.querySelector('div')
-			    window
-			    	.addEventListener('mouseup',function(){
-			    		console.log('its down')
-			    	})
+
+			    var wnd = fin.desktop.Window.getCurrent();
+					wnd.addEventListener("bounds-changing", function (event) {
+					    console.log("The window has been moved or resized");
+					}, function () {
+					    console.log("The registration was successful");
+					},function (reason) {
+					    console.log("failure:" + reason);
+					});
+
+					parentWindow.addEventListener("bounds-changing", function (event) {
+					    console.log("The window has been moved or resized");
+					}, function () {
+					    console.log("The registration was successful");
+					},function (reason) {
+					    console.log("failure:" + reason);
+					});
+
+			    // var moveOnDrag, offsetX, offsetY;
+
+			    // window.addEventListener('mousemove', function(e) {
+			    // 	if (moveOnDrag){
+			    // 		fin
+			    // 			.desktop
+			    // 			.Window
+			    // 			.getCurrent()
+							// 	//.moveTo(e.screenX - offsetX, e.screenY - offsetY);
+			    // 	}
+			    //     //console.warn('this is a mouse move event', e);
+			    // });
+			    // document.querySelector('div')
+			    // //window
+			    // 	.addEventListener('mousedown',function(e){
+			    // 		// offsetX = e.offsetX;
+			    // 		// offsetY = e.offsetY;
+			    // 		console.log('its down',e)
+			    // 		document.querySelector('div').style.cssText = '-webkit-app-region: drag';
+			    // 	})
 			    // //document.querySelector('div')
-			    window
-			    window
-			    	.addEventListener('mousemove',function(){
-			    		console.log('its moving')
-			    	})
-			    //document.querySelector('div')
-			    //window
-			    document.body
-			    	.addEventListener('dragstart',function(e){
-			    		//moveOnDrag = false;
-			    		console.log('its a drag', e)
-			    	})
-			    document.querySelector('body')
-			    	.addEventListener('dragstart',function(e){
-			    		//moveOnDrag = false;
-			    		console.log('its a drag', e)
-			    	})
+			    // window
+			    // 	.addEventListener('mouseup',function(){
+			    // 		console.log('its down')
+			    // 	})
+			    // // //document.querySelector('div')
+			    // window
+			    // window
+			    // 	.addEventListener('mousemove',function(){
+			    // 		console.log('its moving')
+			    // 	})
+			    // //document.querySelector('div')
+			    // //window
+			    // document.querySelector('div')
+			    // 	.addEventListener('dragstart',function(e){
+			    // 		document.querySelector('div').style.cursor = 'crosshair';
+			    // 		e.dataTransfer.effectAllowed = 'move';
+			    // 		dataTransfer.effectAllowed
+			    // 		//moveOnDrag = false;
+			    // 		console.log('its a drag', e)
+
+
+			    // 		var dragIcon = document.createElement('img');
+							// dragIcon.src = 'https://www.google.com/images/srpr/logo11w.png';
+							// dragIcon.width = 100;
+							// e.dataTransfer.setDragImage(dragIcon, -10, -10);
+
+			    // 	})
+			    // document.querySelector('body')
+			    // 	.addEventListener('dragstart',function(e){
+			    // 		//moveOnDrag = false;
+			    // 		console.log('its a drag', e)
+			    // 	})
 
 			  //   var wnd = fin.desktop.Window.getCurrent();
 					// wnd.addEventListener("shown", function (event) {
@@ -137,12 +170,12 @@
 					//     console.log("failure:" + reason);
 					// });
 
-			    window.addEventListener('mousemove', function(e) {
-			        console.warn('this is a mouse move event', e);
-			    });
-			    window.addEventListener('mouseup', function(e) {
-			        console.warn('this is a mouse up event', e);
-			    });
+			    // window.addEventListener('mousemove', function(e) {
+			    //     console.warn('this is a mouse move event', e);
+			    // });
+			    // window.addEventListener('mouseup', function(e) {
+			    //     console.warn('this is a mouse up event', e);
+			    // });
 			});
 		</script>
 		<!-- <script src="js/tearout.js"></script> -->

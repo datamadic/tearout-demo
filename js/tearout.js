@@ -16,17 +16,17 @@ var duplicateElementWindowConfig = {
 
 
 
-var initDragWithoutGhost = function(element, dropWindow) {
+var initDragWithoutGhost = function(config) {
     'use strict';
 
     var me = {
             currentlyDragging: false,
             offsetX: 0,
             offsetY: 0,
-            element: element,
-            dropWindow: dropWindow
+            element: config.element,
+            dropWindow: config.dropWindow
         },
-        dragTarget = element.setCapture ? element : document;
+        dragTarget = config.element.setCapture ? config.element : document;
 
     me.setOffsetX = function(x) {
         me.offsetX = x;
@@ -65,15 +65,16 @@ var initDragWithoutGhost = function(element, dropWindow) {
         return me;
     };
 
-    /*
+    /*****
 		Mouse Event Handlers
-    */
+    *****/
     me.handleMouseDown = function(e) {
         me.setCurrentlyDragging(true)
             .setElementCapture()
             .setOffsetX(e.offsetX)
             .setOffsetY(e.offsetY)
             .moveDropTarget(e.screenX - e.offsetX, e.screenY - e.offsetY)
+            .injectIntoOpenfinWindow(me.element, me.dropWindow)
             .displayDropTarget();
     };
     me.handleMouseMove = function(e) {
@@ -85,7 +86,20 @@ var initDragWithoutGhost = function(element, dropWindow) {
         me.currentlyDragging = false;
     };
 
-    element.addEventListener('mousedown', me.handleMouseDown);
+    /* inject the content of the tearout into the new window */
+    me.injectIntoOpenfinWindow = function(injection, openfinWindow) {
+        console.log(me.dropWindow, me.element);
+        openfinWindow
+            .contentWindow
+            .window
+            .document
+            .body
+            .appendChild(injection);
+
+        return me;
+    };
+
+    me.element.addEventListener('mousedown', me.handleMouseDown);
     dragTarget.addEventListener('mousemove', me.handleMouseMove, true);
     dragTarget.addEventListener('mouseup', me.handleMouseUp, true);
 
@@ -162,10 +176,36 @@ var initDuplicateDrag = function() {
 
 };
 
+//var ghostWindow = new fin.desktop.Window(duplicateElementWindowConfig);
+
 var initDragDemo = function() {
     console.log('from the main');
     //initDuplicateDrag();
-    initDragWithoutGhost(document.querySelector('.gold'), new fin.desktop.Window(duplicateElementWindowConfig));
+    initDragWithoutGhost({
+        element: document.querySelector('.gold'),
+        dropWindow: new fin.desktop.Window(duplicateElementWindowConfig),
+        dragBackTarget: document.querySelector('.gold').parentNode
+    });
+
+    document.querySelector('.gold').addEventListener('dragover', function(e) {
+        e.preventDefault();
+        console.log(e);
+    });
+    document.querySelector('.gold').addEventListener('drop', function(e) {
+        e.preventDefault();
+        console.log(e);
+    });
+    // document.querySelector('.gold').addEventListener('dragstart', function(e) {
+    //     document.querySelector('.gold').style.cursor = 'crosshair';
+    //     e.preventDefault();
+    // });
+
+    // document.querySelector('.indianred').addEventListener('dragstart', function(e) {
+    //     document.querySelector('.indianred').style.cursor = 'crosshair';
+    //     e.preventDefault();
+    // });
+
+
 };
 
 fin.desktop.main(function() {
