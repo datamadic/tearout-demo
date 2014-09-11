@@ -14,8 +14,6 @@ var duplicateElementWindowConfig = {
     'resizable': false
 };
 
-
-
 var initDragWithoutGhost = function(config) {
     'use strict';
 
@@ -24,7 +22,8 @@ var initDragWithoutGhost = function(config) {
             offsetX: 0,
             offsetY: 0,
             element: config.element,
-            dropWindow: config.dropWindow
+            tearoutWindow: config.tearoutWindow,
+            dropTarget: config.dropTarget || null
         },
         dragTarget = config.element.setCapture ? config.element : document;
 
@@ -56,12 +55,41 @@ var initDragWithoutGhost = function(config) {
         return me;
     };
     me.moveDropTarget = function(x, y) {
-        me.dropWindow.moveTo(x, y);
+        me.tearoutWindow.moveTo(x, y);
         return me;
     };
     me.displayDropTarget = function() {
-        me.dropWindow.show();
-        me.dropWindow.setAsForeground();
+        me.tearoutWindow.show();
+        me.tearoutWindow.setAsForeground();
+        return me;
+    };
+
+    /* inject the content of the tearout into the new window */
+    me.appendToOpenfinWindow = function(injection, openfinWindow) {
+        console.log(me.tearoutWindow, me.element);
+        openfinWindow
+            .contentWindow
+            .document
+            .body
+            .appendChild(injection);
+
+        return me;
+    };
+
+    /* 
+		attempt to set the drop target that the torn out window will look for 
+		while moving. we do this by trying to call a the setDropTarget function
+		that is expected to be on the remote window
+    */
+    me.setDropTarget = function() {
+        var remoteDropFunction = me.tearoutWindow
+            .getNativeWindow()
+            .setDropTarget;
+
+        if (remoteDropFunction && me.dropTarget) {
+            remoteDropFunction(me.dropTarget);
+        }
+
         return me;
     };
 
@@ -74,8 +102,9 @@ var initDragWithoutGhost = function(config) {
             .setOffsetX(e.offsetX)
             .setOffsetY(e.offsetY)
             .moveDropTarget(e.screenX - e.offsetX, e.screenY - e.offsetY)
-            .injectIntoOpenfinWindow(me.element, me.dropWindow)
-            .displayDropTarget();
+            .appendToOpenfinWindow(me.element, me.tearoutWindow)
+            .displayDropTarget()
+            .setDropTarget();
     };
     me.handleMouseMove = function(e) {
         if (me.currentlyDragging) {
@@ -86,18 +115,7 @@ var initDragWithoutGhost = function(config) {
         me.currentlyDragging = false;
     };
 
-    /* inject the content of the tearout into the new window */
-    me.injectIntoOpenfinWindow = function(injection, openfinWindow) {
-        console.log(me.dropWindow, me.element);
-        openfinWindow
-            .contentWindow
-            .window
-            .document
-            .body
-            .appendChild(injection);
 
-        return me;
-    };
 
     me.element.addEventListener('mousedown', me.handleMouseDown);
     dragTarget.addEventListener('mousemove', me.handleMouseMove, true);
@@ -183,18 +201,19 @@ var initDragDemo = function() {
     //initDuplicateDrag();
     initDragWithoutGhost({
         element: document.querySelector('.gold'),
-        dropWindow: new fin.desktop.Window(duplicateElementWindowConfig),
-        dragBackTarget: document.querySelector('.gold').parentNode
+        tearoutWindow: new fin.desktop.Window(duplicateElementWindowConfig),
+        dropTarget: document.querySelector('.gold').parentNode
     });
 
-    document.querySelector('.gold').addEventListener('dragover', function(e) {
-        e.preventDefault();
-        console.log(e);
-    });
-    document.querySelector('.gold').addEventListener('drop', function(e) {
-        e.preventDefault();
-        console.log(e);
-    });
+    // document.querySelector('.gold').addEventListener('dragover', function(e) {
+    //     e.preventDefault();
+    //     console.log(e);
+    // });
+    // document.querySelector('.gold').addEventListener('drop', function(e) {
+    //     e.preventDefault();
+    //     console.log(e);
+    // });
+
     // document.querySelector('.gold').addEventListener('dragstart', function(e) {
     //     document.querySelector('.gold').style.cursor = 'crosshair';
     //     e.preventDefault();
