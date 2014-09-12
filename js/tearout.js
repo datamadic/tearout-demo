@@ -11,7 +11,8 @@ var duplicateElementWindowConfig = {
     'autoShow': false,
     'url': 'views/duplicate.html',
     'frame': false,
-    'resizable': false
+    'resizable': false,
+    'maximizable': false
 };
 
 var initDragWithoutGhost = function(config) {
@@ -19,6 +20,7 @@ var initDragWithoutGhost = function(config) {
 
     var me = {
             currentlyDragging: false,
+            moveEventOccured: false,
             inTearout: false,
             offsetX: 0,
             offsetY: 0,
@@ -27,6 +29,7 @@ var initDragWithoutGhost = function(config) {
             dropTarget: config.dropTarget || null
         },
         dragTarget = config.element.setCapture ? config.element : document;
+    console.log('this is the drag target', dragTarget);
 
     me.setOffsetX = function(x) {
         me.offsetX = x;
@@ -61,6 +64,13 @@ var initDragWithoutGhost = function(config) {
             me.element.setCapture();
         }
         return me;
+    };
+    me.setMoveEventOccured = function(state) {
+        me.moveEventOccured = state;
+        return me;
+    };
+    me.getMoveEventOccured = function() {
+        return me.moveEventOccured;
     };
     me.releaseElementCapture = function() {
         if (me.element.releaseCapture) {
@@ -99,7 +109,8 @@ var initDragWithoutGhost = function(config) {
     me.callTearoutWindowFunction = function(functionName, args) {
         var tearoutWindow = me.tearoutWindow
             .getNativeWindow(),
-            remoteDropFunction = tearoutWindow[functionName];
+            dropTargetAPI = tearoutWindow['dropTargetAPI'],
+            remoteDropFunction = dropTargetAPI && dropTargetAPI[functionName];
 
         if (remoteDropFunction) {
             remoteDropFunction.apply(tearoutWindow, args);
@@ -160,26 +171,45 @@ var initDragWithoutGhost = function(config) {
             .displayDropTarget()
             .callTearoutWindowFunction('setDropTarget', [me.dropTarget])
             .callTearoutWindowFunction('setDropCallback', [
+                // if (me.getCurrentlyDragging) return;
 
                 function() {
                     me.hideDropTarget()
                         .appendElementBackFromTearout()
                         .setInTearout(false)
                         .callTearoutWindowFunction('setInitialDragOver', [false]);
+
+                    /*dont carry over the mouse down event from the child window*/
+                    // setTimeout(function() {
+                    //     me.setInTearout(false);
+                    // }, 1);
                 }
             ])
             .callTearoutWindowFunction('setSharedState', [me.dropTarget]);
 
     };
     me.handleMouseMove = function(e) {
+
         if (me.currentlyDragging) {
-            me.moveDropTarget(e.screenX - me.getOffsetX(), e.screenY - me.getOffsetY());
+            me.setMoveEventOccured(true)
+                .moveDropTarget(e.screenX - me.getOffsetX(), e.screenY - me.getOffsetY());
         }
     };
     me.handleMouseUp = function() {
         me.setCurrentlyDragging(false)
             .enableDocumentElementSelection()
-            .callTearoutWindowFunction('setInitialDragOver', [true]);
+
+        /* 
+        	we do not want to set the initial drag over flag on the tearout
+        	window if there were no mouse move events. this prevents up from
+        	being sucked back into the drop target after clicking on a non-
+        	dragable selection 
+        */
+        if (me.getMoveEventOccured()) {
+            me.callTearoutWindowFunction('setInitialDragOver', [true]);
+        }
+
+        me.setMoveEventOccured(false);
     };
 
 

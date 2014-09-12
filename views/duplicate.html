@@ -7,83 +7,18 @@
 				overflow: hidden;
 				margin: 0;
 				-webkit-app-region: drag;
-				
+				pointer-events: all;
 			}
 			input {
 				-webkit-app-region: no-drag;
-			}
-			div {
-				/*-webkit-app-region: drag;*/
 				pointer-events: all;
-				background-color: indianred;
 			}
 		</style>
 	</head>
 	<body>
 
-		<!-- <div class="tearout indianred" draggable="true"></div> -->
-
 		<script src="../js/desktop-adapter.js"></script>
 		<script src="../js/geometry.js"></script>
-		<script>
-			var dropTarget,
-					dropCallback = function(){},
-					initialDragOver = false;
-
-			var setDropTarget = function(element){
-				dropTarget = element;
-			};
-			var setDropCallback = function(callback){
-				dropCallback = callback;
-			};
-			var setInitialDragOver = function(state){
-				initialDragOver = state;
-			};
-			var getWindowPosition = function(windowElement) {
-				return {
-						height : windowElement.outerHeight,
-			    	width: windowElement.outerWidth,
-			    	top: windowElement.screenY,
-			    	left: windowElement.screenX
-				};
-			};
-			var elementScreenPosition = function(windowElement, element){
-				var relativeElementPosition = element.getBoundingClientRect();
-				return {
-						height : relativeElementPosition.height,
-			    	width: relativeElementPosition.width,
-			    	top: windowElement.top + relativeElementPosition.top,
-			    	left: windowElement.left + relativeElementPosition.left
-				};
-			};
-
-			fin.desktop.main(function() {
-			    'use strict';
-
-			    var currentWindow = fin.desktop.Window.getCurrent();
-
-			    currentWindow.addEventListener("bounds-changing", function (event) {
-						    
-						    var overDropTarget = geometry.rectangle(getWindowPosition(window))
-						    	.intersects(
-						    			geometry.rectangle(
-						    				elementScreenPosition(
-						    						getWindowPosition(opener), dropTarget)));
-
-						  
-						  if(overDropTarget && initialDragOver){
-						  	dropCallback();
-						  	console.log('this')
-						  }
-						}, 
-						function () {},
-						function (reason) {
-						    console.log("failure:" + reason);
-						});
-
-
-			});
-		</script>
-		<!-- <script src="js/tearout.js"></script> -->
+		<script src="../js/drop-target.js"></script>
 	</body>
 </html>
