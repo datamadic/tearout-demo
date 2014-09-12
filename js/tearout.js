@@ -19,6 +19,7 @@ var initDragWithoutGhost = function(config) {
 
     var me = {
             currentlyDragging: false,
+            inTearout: false,
             offsetX: 0,
             offsetY: 0,
             element: config.element,
@@ -41,6 +42,13 @@ var initDragWithoutGhost = function(config) {
     me.getOffsetY = function() {
         return me.offsetY;
     };
+    me.setInTearout = function(state) {
+        me.inTearout = state;
+        return me;
+    };
+    me.getInTearout = function() {
+        return me.inTearout;
+    };
     me.setCurrentlyDragging = function(dragging) {
         me.currentlyDragging = dragging;
         return me;
@@ -54,6 +62,12 @@ var initDragWithoutGhost = function(config) {
         }
         return me;
     };
+    me.releaseElementCapture = function() {
+        if (me.element.releaseCapture) {
+            me.element.releaseCapture();
+        }
+        return me;
+    };
     me.moveDropTarget = function(x, y) {
         me.tearoutWindow.moveTo(x, y);
         return me;
@@ -63,10 +77,13 @@ var initDragWithoutGhost = function(config) {
         me.tearoutWindow.setAsForeground();
         return me;
     };
+    me.hideDropTarget = function() {
+        me.tearoutWindow.hide();
+        return me;
+    };
 
     /* inject the content of the tearout into the new window */
     me.appendToOpenfinWindow = function(injection, openfinWindow) {
-        console.log(me.tearoutWindow, me.element);
         openfinWindow
             .contentWindow
             .document
@@ -75,36 +92,84 @@ var initDragWithoutGhost = function(config) {
 
         return me;
     };
+    me.appendElementBackFromTearout = function() {
+        me.dropTarget.appendChild(me.element);
+        return me;
+    };
+    me.callTearoutWindowFunction = function(functionName, args) {
+        var tearoutWindow = me.tearoutWindow
+            .getNativeWindow(),
+            remoteDropFunction = tearoutWindow[functionName];
 
-    /* 
-		attempt to set the drop target that the torn out window will look for 
-		while moving. we do this by trying to call a the setDropTarget function
-		that is expected to be on the remote window
-    */
-    me.setDropTarget = function() {
-        var remoteDropFunction = me.tearoutWindow
-            .getNativeWindow()
-            .setDropTarget;
-
-        if (remoteDropFunction && me.dropTarget) {
-            remoteDropFunction(me.dropTarget);
+        if (remoteDropFunction) {
+            remoteDropFunction.apply(tearoutWindow, args);
         }
 
         return me;
     };
+    me.clearIncomingTearoutWindow = function() {
+        me.tearoutWindow
+            .getNativeWindow()
+            .document
+            .body = me.tearoutWindow
+            .getNativeWindow()
+            .document.createElement('body');
+        return me;
+    };
+
+    /* 
+    	when an elemet is being dragged do not allow back ground elements to be 
+    	selected. this prevents problems when dragging back in while the browser
+    	still thinks that the there is a focused/selected element 
+    */
+    me.disableDocumentElementSelection = function() {
+        document.body.style.cssText = document.body.style.cssText + '-webkit-user-select: none';
+        return me;
+    };
+    me.enableDocumentElementSelection = function() {
+        document.body.style.cssText = document.body.style.cssText.replace('-webkit-user-select: none', '');
+        return me;
+    };
+
 
     /*****
 		Mouse Event Handlers
     *****/
     me.handleMouseDown = function(e) {
+        console.log(e.srcElement.nodeType, e);
+        /* if already in a tearout, do nothing */
+        if (me.getInTearout() || e.srcElement !== me.element) {
+            console.log('returning', me.getInTearout(), e.srcElement !== me.element);
+            return false;
+        }
+        /* 
+			attempt to set the drop target that the torn out window will look for 
+			while moving. we do this by trying to call a the setDropTarget function
+			that is expected to be on the remote window. the drop callback is set 
+			in the same way.
+	    */
         me.setCurrentlyDragging(true)
             .setElementCapture()
+            .disableDocumentElementSelection()
             .setOffsetX(e.offsetX)
             .setOffsetY(e.offsetY)
             .moveDropTarget(e.screenX - e.offsetX, e.screenY - e.offsetY)
+            .clearIncomingTearoutWindow()
             .appendToOpenfinWindow(me.element, me.tearoutWindow)
+            .setInTearout(true)
             .displayDropTarget()
-            .setDropTarget();
+            .callTearoutWindowFunction('setDropTarget', [me.dropTarget])
+            .callTearoutWindowFunction('setDropCallback', [
+
+                function() {
+                    me.hideDropTarget()
+                        .appendElementBackFromTearout()
+                        .setInTearout(false)
+                        .callTearoutWindowFunction('setInitialDragOver', [false]);
+                }
+            ])
+            .callTearoutWindowFunction('setSharedState', [me.dropTarget]);
+
     };
     me.handleMouseMove = function(e) {
         if (me.currentlyDragging) {
@@ -112,7 +177,9 @@ var initDragWithoutGhost = function(config) {
         }
     };
     me.handleMouseUp = function() {
-        me.currentlyDragging = false;
+        me.setCurrentlyDragging(false)
+            .enableDocumentElementSelection()
+            .callTearoutWindowFunction('setInitialDragOver', [true]);
     };
 
 
@@ -120,6 +187,8 @@ var initDragWithoutGhost = function(config) {
     me.element.addEventListener('mousedown', me.handleMouseDown);
     dragTarget.addEventListener('mousemove', me.handleMouseMove, true);
     dragTarget.addEventListener('mouseup', me.handleMouseUp, true);
+
+    return me;
 
 };
 
@@ -195,11 +264,11 @@ var initDuplicateDrag = function() {
 };
 
 //var ghostWindow = new fin.desktop.Window(duplicateElementWindowConfig);
-
+var me;
 var initDragDemo = function() {
     console.log('from the main');
     //initDuplicateDrag();
-    initDragWithoutGhost({
+    me = initDragWithoutGhost({
         element: document.querySelector('.gold'),
         tearoutWindow: new fin.desktop.Window(duplicateElementWindowConfig),
         dropTarget: document.querySelector('.gold').parentNode
