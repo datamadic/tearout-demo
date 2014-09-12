@@ -7,16 +7,20 @@
 
     var dropTarget,
         dropCallback = function() {},
+        closeCallback = function() {},
         initialDragOver = false;
 
     dropTargetAPI.setDropTarget = function(element) {
         dropTarget = element;
     };
+    dropTargetAPI.setInitialDragOver = function(state) {
+        initialDragOver = state;
+    };
     dropTargetAPI.setDropCallback = function(callback) {
         dropCallback = callback;
     };
-    dropTargetAPI.setInitialDragOver = function(state) {
-        initialDragOver = state;
+    dropTargetAPI.setCloseCallback = function(callback) {
+        closeCallback = callback;
     };
 
     var getWindowPosition = function(windowElement) {
@@ -50,6 +54,15 @@
             if (overDropTarget && initialDragOver) {
                 dropCallback();
             }
+        });
+
+        /* 
+        	when the user clicks the close button, instead of terminating the 
+        	window, we call the registerd close call back and hide it
+        */
+        currentWindow.addEventListener('close-requested', function() {
+            closeCallback()
+            currentWindow.hide();
         });
     });
 

@@ -1,21 +1,25 @@
 /*global fin*/
 
-var duplicateElementWindowConfig = {
-    'name': 'duplicate-demo',
-    'maxWidth': 210,
-    'maxHeight': 210,
-    'defaultWidth': 210,
-    'defaultHeight': 210,
-    'width': 210,
-    'height': 210,
-    'autoShow': false,
-    'url': 'views/duplicate.html',
-    'frame': false,
-    'resizable': false,
-    'maximizable': false
+var getConfig = function(frame) {
+    'use strict';
+
+    return {
+        'name': 'duplicate-demo' + Math.random(),
+        'maxWidth': 210,
+        'maxHeight': 210 + (frame ? 28 : 0),
+        'defaultWidth': 210,
+        'defaultHeight': 210 + (frame ? 28 : 0),
+        'width': 210,
+        'height': 210 + (frame ? 28 : 0),
+        'autoShow': false,
+        'url': 'views/duplicate.html',
+        'frame': frame || false,
+        'resizable': false,
+        'maximizable': false
+    };
 };
 
-var initDragWithoutGhost = function(config) {
+var initDragAndDrop = function(config) {
     'use strict';
 
     var me = {
@@ -26,17 +30,19 @@ var initDragWithoutGhost = function(config) {
             offsetY: 0,
             element: config.element,
             tearoutWindow: config.tearoutWindow,
-            dropTarget: config.dropTarget || null
+            dropTarget: config.dropTarget || null,
+            frame: config.frame || null
         },
         dragTarget = config.element.setCapture ? config.element : document;
-    console.log('this is the drag target', dragTarget);
+
 
     me.setOffsetX = function(x) {
         me.offsetX = x;
         return me;
     };
+    /* account for the heder bar if in a frame */
     me.setOffsetY = function(y) {
-        me.offsetY = y;
+        me.offsetY = me.frame ? y + 28 : y;
         return me;
     };
     me.getOffsetX = function() {
@@ -72,12 +78,6 @@ var initDragWithoutGhost = function(config) {
     me.getMoveEventOccured = function() {
         return me.moveEventOccured;
     };
-    me.releaseElementCapture = function() {
-        if (me.element.releaseCapture) {
-            me.element.releaseCapture();
-        }
-        return me;
-    };
     me.moveDropTarget = function(x, y) {
         me.tearoutWindow.moveTo(x, y);
         return me;
@@ -109,7 +109,7 @@ var initDragWithoutGhost = function(config) {
     me.callTearoutWindowFunction = function(functionName, args) {
         var tearoutWindow = me.tearoutWindow
             .getNativeWindow(),
-            dropTargetAPI = tearoutWindow['dropTargetAPI'],
+            dropTargetAPI = tearoutWindow.dropTargetAPI,
             remoteDropFunction = dropTargetAPI && dropTargetAPI[functionName];
 
         if (remoteDropFunction) {
@@ -119,6 +119,7 @@ var initDragWithoutGhost = function(config) {
         return me;
     };
     me.clearIncomingTearoutWindow = function() {
+        /* clear out all the elements but keep the js context ;) */
         me.tearoutWindow
             .getNativeWindow()
             .document
@@ -127,18 +128,32 @@ var initDragWithoutGhost = function(config) {
             .document.createElement('body');
         return me;
     };
+    me.returnFromTearout = function() {
+        me.hideDropTarget()
+            .appendElementBackFromTearout()
+            .setInTearout(false)
+            .callTearoutWindowFunction('setInitialDragOver', [false]);
+    };
+    me.dropCallback = function() {
+        if (me.frame) {
+            return;
+        }
+        me.returnFromTearout();
+    };
 
     /* 
-    	when an elemet is being dragged do not allow back ground elements to be 
-    	selected. this prevents problems when dragging back in while the browser
-    	still thinks that the there is a focused/selected element 
+		when an elemet is being dragged do not allow background elements to be 
+		selected. this prevents problems when dragging back in while the browser
+		still thinks that the there is a focused/selected element 
     */
     me.disableDocumentElementSelection = function() {
-        document.body.style.cssText = document.body.style.cssText + '-webkit-user-select: none';
+        var style = document.body.style;
+        style.cssText = style.cssText + '-webkit-user-select: none';
         return me;
     };
     me.enableDocumentElementSelection = function() {
-        document.body.style.cssText = document.body.style.cssText.replace('-webkit-user-select: none', '');
+        var style = document.body.style;
+        style.cssText = style.cssText.replace('-webkit-user-select: none', '');
         return me;
     };
 
@@ -147,63 +162,45 @@ var initDragWithoutGhost = function(config) {
 		Mouse Event Handlers
     *****/
     me.handleMouseDown = function(e) {
-        console.log(e.srcElement.nodeType, e);
-        /* if already in a tearout, do nothing */
+
+        /* 
+			if already in a tearout, or the src element is not the 
+			the base element passed to be make tearout-able do nothing
+        */
         if (me.getInTearout() || e.srcElement !== me.element) {
-            console.log('returning', me.getInTearout(), e.srcElement !== me.element);
             return false;
         }
-        /* 
-			attempt to set the drop target that the torn out window will look for 
-			while moving. we do this by trying to call a the setDropTarget function
-			that is expected to be on the remote window. the drop callback is set 
-			in the same way.
-	    */
+
         me.setCurrentlyDragging(true)
             .setElementCapture()
             .disableDocumentElementSelection()
             .setOffsetX(e.offsetX)
             .setOffsetY(e.offsetY)
-            .moveDropTarget(e.screenX - e.offsetX, e.screenY - e.offsetY)
+            .moveDropTarget(e.screenX - me.offsetX, e.screenY - me.offsetY)
             .clearIncomingTearoutWindow()
             .appendToOpenfinWindow(me.element, me.tearoutWindow)
             .setInTearout(true)
             .displayDropTarget()
             .callTearoutWindowFunction('setDropTarget', [me.dropTarget])
-            .callTearoutWindowFunction('setDropCallback', [
-                // if (me.getCurrentlyDragging) return;
-
-                function() {
-                    me.hideDropTarget()
-                        .appendElementBackFromTearout()
-                        .setInTearout(false)
-                        .callTearoutWindowFunction('setInitialDragOver', [false]);
-
-                    /*dont carry over the mouse down event from the child window*/
-                    // setTimeout(function() {
-                    //     me.setInTearout(false);
-                    // }, 1);
-                }
-            ])
-            .callTearoutWindowFunction('setSharedState', [me.dropTarget]);
-
+            .callTearoutWindowFunction('setDropCallback', [me.dropCallback])
+            .callTearoutWindowFunction('setCloseCallback', [me.returnFromTearout]);
     };
     me.handleMouseMove = function(e) {
 
         if (me.currentlyDragging) {
             me.setMoveEventOccured(true)
-                .moveDropTarget(e.screenX - me.getOffsetX(), e.screenY - me.getOffsetY());
+                .moveDropTarget(e.screenX - me.offsetX, e.screenY - me.offsetY);
         }
     };
     me.handleMouseUp = function() {
         me.setCurrentlyDragging(false)
-            .enableDocumentElementSelection()
+            .enableDocumentElementSelection();
 
         /* 
-        	we do not want to set the initial drag over flag on the tearout
-        	window if there were no mouse move events. this prevents up from
-        	being sucked back into the drop target after clicking on a non-
-        	dragable selection 
+			we do not want to set the initialDragOver flag on the tearout
+			window if there were no mouse move events. this prevents us from
+			being sucked back into the drop target after clicking on a non-
+			dragable selection 
         */
         if (me.getMoveEventOccured()) {
             me.callTearoutWindowFunction('setInitialDragOver', [true]);
@@ -212,117 +209,32 @@ var initDragWithoutGhost = function(config) {
         me.setMoveEventOccured(false);
     };
 
-
-
+    /*****
+		Register Handlers
+    *****/
     me.element.addEventListener('mousedown', me.handleMouseDown);
     dragTarget.addEventListener('mousemove', me.handleMouseMove, true);
     dragTarget.addEventListener('mouseup', me.handleMouseUp, true);
-
-    return me;
-
 };
 
-var initDuplicateDrag = function() {
+
+var initDragDemo = function() {
     'use strict';
 
-
-    var dragElement = document.querySelector('.duplicate'),
-        newWindow = new fin.desktop.Window(duplicateElementWindowConfig);
-
-    //function draggable(element) {
-    var dragging = null,
-        offsetX, offsetY;;
-
-    dragElement.addEventListener('mousedown', function(e) {
-        // newWindow.show();
-        // newWindow.setAsForeground();
-        e = window.event || e;
-        offsetX = e.offsetX;
-        offsetY = e.offsetY;
-
-        dragging = {
-            mouseX: e.clientX,
-            mouseY: e.clientY
-        };
-        if (dragElement.setCapture) {
-            dragElement.setCapture();
-        }
-    });
-
-    dragElement.addEventListener('losecapture', function(e) {
-        dragging = null;
-    });
-    dragElement.addEventListener('drag', function(e) {
-        console.log('drag ', e);
-        //newWindow.moveTo(e.screenX - offsetX, e.screenY - offsetY);
-        //dragging = null;
-    });
-    dragElement.addEventListener('dragstart', function(e) {
-        console.log('drag ', e);
-        e.dataTransfer.effectAllowed = 'copy'; //.dropEffect = 'move';
-        //newWindow.moveTo(e.screenX - offsetX, e.screenY - offsetY);
-        //dragging = null;
-    });
-
-    // document.addEventListener('mouseup', function(e) {
-    //     console.log('this is the up event', e, e.screenX - e.offsetX, e.screenY - e.offsetY);
-    //     newWindow.moveTo(e.screenX - offsetX, e.screenY - offsetY);
-    //     //newWindow.show();
-    //     // newWindow.bringToFront();
-    //     newWindow.setAsForeground();
-    //     dragging = null;
-    // }, true);
-
-    document.addEventListener('dragend', function(e) {
-        console.log('this is the up event', e, e.screenX - e.offsetX, e.screenY - e.offsetY);
-        newWindow.moveTo(e.screenX - offsetX, e.screenY - offsetY);
-        newWindow.show();
-        // newWindow.bringToFront();
-        newWindow.setAsForeground();
-        dragging = null;
-    }, true);
-
-    var dragTarget = dragElement.setCapture ? dragElement : document;
-
-    dragTarget.addEventListener('mousemove', function(e) {
-        if (dragging) {
-            console.log(e);
-            //newWindow.moveTo(e.screenX - offsetX, e.screenY - offsetY);
-        }
-    }, true);
-
-};
-
-//var ghostWindow = new fin.desktop.Window(duplicateElementWindowConfig);
-var me;
-var initDragDemo = function() {
-    console.log('from the main');
-    //initDuplicateDrag();
-    me = initDragWithoutGhost({
+    initDragAndDrop({
         element: document.querySelector('.gold'),
-        tearoutWindow: new fin.desktop.Window(duplicateElementWindowConfig),
+        tearoutWindow: new fin.desktop.Window(getConfig()),
         dropTarget: document.querySelector('.gold').parentNode
     });
 
-    // document.querySelector('.gold').addEventListener('dragover', function(e) {
-    //     e.preventDefault();
-    //     console.log(e);
-    // });
-    // document.querySelector('.gold').addEventListener('drop', function(e) {
-    //     e.preventDefault();
-    //     console.log(e);
-    // });
-
-    // document.querySelector('.gold').addEventListener('dragstart', function(e) {
-    //     document.querySelector('.gold').style.cursor = 'crosshair';
-    //     e.preventDefault();
-    // });
-
-    // document.querySelector('.indianred').addEventListener('dragstart', function(e) {
-    //     document.querySelector('.indianred').style.cursor = 'crosshair';
-    //     e.preventDefault();
-    // });
-
+    /* add a tearout that uses frames */
+    var frame = true;
+    initDragAndDrop({
+        element: document.querySelector('.indianred'),
+        tearoutWindow: new fin.desktop.Window(getConfig(frame)),
+        dropTarget: document.querySelector('.indianred').parentNode,
+        frame: true
+    });
 
 };
 
