@@ -5,9 +5,3 @@ The OpenFin Runtime makes it possible to 'tear out' elements from an application
 ## Installing And Running The Demo
 
 Click [here](https://dl.openfin.co/services/download?fileName=tearout-demo-installer&config=https://demoappdirectory.openf.in/desktop/deploy/tearout-demo/app.json) to install a hosted copy of the demo.
-
-If you would like to play with the code a bit:
-* Download/Fork the repository 
-* `npm install` to get the required node packages
-* Run the local development server by calling `grunt` from the root of the project
-* Follow the [RVM](http://openfin.co/developers.html?url=developers/getting-started/deploy-app.html) procedure to create and the app locally using start.json as the config file

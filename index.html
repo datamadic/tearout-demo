@@ -10,6 +10,7 @@
 			and have them persist in windows on their own.  A newly created tearout window 
 			becomes a child of the application it came from.
 		</p>
+		<h2>Creating a Tearout Window</h2>
 		<p>
 			When you decide you want to tear out an element for your application, you need to create 
 			an OpenFin window to receive the DOM element. This is done with a call to <code>new fin.desktop.Window</code>. 
@@ -20,6 +21,7 @@
 			the parent is able to make OpenFin API calls against it. For example, the parent window can 
 			move, animate, show, hide, minimize, maximize, etc the created child window.
 		</p>
+		<h2>Dragging a Tearout Window</h2>
 		<p>
 			The actual dragging out of the element can be initiated in a number of ways. One option (and the one 
 			demonstrated here) is to inject the element that is to be dragged out into a waiting destination tearout window 
@@ -65,7 +67,7 @@
 			</div>
 		</div>
 
-		<h3>Keep In Mind</h3>
+		<h2>Keep In Mind</h2>
 		<p>
 			Applications such as MarketStack <span class="browser-link" destination="http://openfin.co/app-gallery.html">(
 			available on OpenFin’s Gallery)</span>  create a tearout experience without actually moving DOM from one one 
@@ -73,13 +75,6 @@
 			experience for the user.
 		</p>
 
-		<h1>Whats Next?</h1>
-		Upcoming examples:
-		<ul>
-			<li>How eventing is propagated between parent and tearout</li>
-			<li>How to integrate with Angular</li>
-		</ul>
-		
 		<script src="https://developer.openfin.co/release/adapter/js/openfin-desktop-js-adapter.js"></script>
 		<script src="js/tearout.js"></script>
 		<script src="js/links.js"></script>
