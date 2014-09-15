@@ -8,7 +8,13 @@
         "name": "Tearout-offline",
         "uuid": "tearout-main-offline",
         "url": "http://local:9000/index.html",
-        "autoShow": true
+        "autoShow": true,
+        "resizable": false,
+        "maximizable": false,
+        "maxWidth": 600,
+        "maxHeight": 1256,
+        "width": 600,
+        "height": 1256
     },
     "runtime": {
         "arguments": "",
@@ -18,6 +24,6 @@
         "company": "OpenFin",
         "description": "Tearout Example",
         "name": "openfin-tearout-offline",
-        "icon": "steeeeeeeeve"
+        "icon": "none"
     }
 }

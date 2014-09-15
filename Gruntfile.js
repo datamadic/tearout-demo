@@ -3,12 +3,17 @@
 var files = {
     js: [
         'Gruntfile.js',
-        'js/*.js'
+        'js/*.js',
+        '!js/desktop-adapter.js',
+        '!js/geometry.js'
+
     ],
 
     jshint: [
         'Gruntfile.js',
-        'js/*.js'
+        'js/*.js',
+        '!js/desktop-adapter.js',
+        '!js/geometry.js'
     ],
 
     scss: [
@@ -34,10 +39,14 @@ module.exports = function(grunt) {
         watch: {
             js: {
                 files: ['js/*.js'],
-                tasks: ['jsbeautifier', 'jshint'],
+                tasks: ['jsbeautifier', 'jshint', 'docco'],
                 options: {
                     livereload: true
                 }
+            },
+            gruntfile: {
+                files: ['Gruntfile.js'],
+                tasks: ['jsbeautifier']
             },
             livereload: {
                 options: {
@@ -132,6 +141,14 @@ module.exports = function(grunt) {
                 livereload: 35729
             },
             livereload: {}
+        },
+        docco: {
+            debug: {
+                src: ['js/tearout.js', 'js/drop-target.js'],
+                options: {
+                    output: 'docs/'
+                }
+            }
         }
     });
 
@@ -142,8 +159,5 @@ module.exports = function(grunt) {
         ]);
     });
 
-    // grunt.registerTask('default', [
-    //         'connect:livereload',
-    //         'watch'
-    //     ]);
+    grunt.registerTask('docs', ['docco']);
 };

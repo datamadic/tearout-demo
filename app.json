@@ -5,8 +5,14 @@
     "startup_app": {
         "name": "Tearout",
         "uuid": "tearout-main",
-        "url": "http://local:9000/index.html",
-        "autoShow": true
+        "url": "https://demoappdirectory.openf.in/desktop/deploy/tearout-demo/index.html",
+        "autoShow": true,
+        "resizable": false,
+        "maximizable": false,
+        "maxWidth": 600,
+        "maxHeight": 1256,
+        "width": 600,
+        "height": 1256 
     },
     "runtime": {
         "arguments": "",
@@ -16,6 +22,6 @@
         "company": "OpenFin",
         "description": "Tearout Example",
         "name": "openfin-tearout",
-        "icon": "steeeeeeeeve"
+        "icon": "none"
     }
 }
