@@ -7,12 +7,12 @@
         "uuid": "tearout-main",
         "url": "https://demoappdirectory.openf.in/desktop/deploy/tearout-demo/index.html",
         "autoShow": true,
-        "resizable": false,
-        "maximizable": false,
+        "resizable": true,
+        "maximizable": true,
         "maxWidth": 600,
         "maxHeight": 1256,
         "width": 600,
-        "height": 1256 
+        "height": 1256
     },
     "runtime": {
         "arguments": "",
