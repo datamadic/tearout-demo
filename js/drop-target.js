@@ -61,7 +61,7 @@
         	window, we call the registerd close call back and hide it
         */
         currentWindow.addEventListener('close-requested', function() {
-            closeCallback()
+            closeCallback();
             currentWindow.hide();
         });
     });
