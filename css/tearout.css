@@ -1,4 +1,6 @@
-
+body{
+	padding: 20px;
+}
 .tearout-container {
 	border: 1px solid black;
 	padding: 5px;
@@ -20,5 +22,10 @@
 }
 .gold {
 	background-color:  gold;
+}
+.openfin-gallery {
+	color: blue;
+	text-decoration: underline;
+	cursor: pointer;
 }
 

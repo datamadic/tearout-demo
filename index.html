@@ -4,37 +4,82 @@
 		<link rel="stylesheet" href="css/tearout.css">
 	</head>
 	<body>
- 		<!-- <h1>Duplicate element</h1>
+		<h1>Intro to OpenFin Tearouts</h1>
 		<p>
-			
+			The OpenFin Runtime makes it possible to 'tear out' elements from an 
+			application and have them persist in windows on their own. The newly 
+			created tearout window becomes a child of the application it came from. 
 		</p>
-		<div class="tearout-container">
-			<div class="tearout steelblue duplicate" draggable="true"></div>
-		</div> -->
-		<h1>Drag Out To Frame</h1>
 		<p>
-			In this example you can initally drag out the element. After 
-			you release the element you can use the naviagation bar to move 
+			When you decide you want to tear out an element, you will need to create 
+			an OpenFin window to receive the DOM element. This is done with a call to
+			<code>new fin.desktop.Window</code>. Because there is a cost to creating 
+			a window, often applications will create a pool of pre-created, empty windows 
+			and leave them in a hidden state until needed. 
+			Under the covers, when asked for a new window the OpenFin Javascript adapter 
+			will call window.open and return a reference to the parent that is wrapped  
+			in an OpenFin Window object. Being an OpenFin window means that the parent is 
+			able to make OpenFin API calls against it. For example, the parent window can
+			move, animate, show, hide, minimize, maximize, etc the created child window. 
+		</p>
+		<p>
+			The actual dragging out of the element can be initiated in a number of ways. 
+			One option (and the one demonstrated here) is to inject the element that is 
+			to be dragged out into a waiting destination tearout window on click. From here you can
+			move the new tearout programmatically. Another option is to use native HTML5 drag and 
+			drop to determine where the drop location will be and on the drop event place 
+			the tearout window. The only caveate to this method is that once the 
+			mouse leaves the bounds of the parent window you no longer are able to set 
+			<code>event.preventDefault()</code> on a dragover event. Unfortunately Windows 
+			will show the 'not-allowed' cursor even though for our purposes we really can drop 
+			anywhere. To mitigate this, you can move an OpenFin window, with opacity set to .01, programmatically
+			to always be behind the mouse. In so doing you are able to have the correct cursor prompt. 
+			This is how our <span class="openfin-gallery">chat app</span> handles tearouts. 
+		</p>
+		
+		
+		<h2>Drag Out To Frame</h2>
+
+		<p>
+			In this example you can initially drag out the element. After 
+			you release the element you can use the navigation bar to move 
 			the element. Close the window to return the element to the patent
 		</p>
 		<div class="tearout-container">
 			<div class="tearout indianred" draggable="false"></div>
 		</div>
 
-		<h1>Drag Out &amp; Back In</h1>
+		<h2>Drag Out &amp; Back In</h2>
 		<p>
-			
+			This tearout will remain frameless and can be dragged back into 
+			its container
 		</p> 
 		<div class="tearout-container">
 			<div class="tearout gold" draggable="false">
-				Name 
+				Some 
 				<input type="text">
-				Email 
+				Inputs  
 				<input type="text">
 			</div>
 		</div>
+
+		<h3>Keep In Mind</h3>
+		<p>
+			Applications such as our <span class="openfin-gallery">chat app</span> and d:code:it's 
+			<span class="openfin-gallery">MarketStack</span> create a tearout experience without actually 
+			moving DOM from one one window to another. Before transferring DOM elements from one window 
+			to another, decide if this is the best experience for the user. 
+		</p>
+
+		<h1>Whats Next?</h1>
+		Upcoming examples:
+		<ul>
+			<li>How eventing is propagated between parent and tearout</li>
+			<li>How to integrate with Angular</li>
+		</ul>
 		
 		<script src="js/desktop-adapter.js"></script>
 		<script src="js/tearout.js"></script>
+		<script src="js/links.js"></script>
 	</body>
 </html>
