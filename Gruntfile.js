@@ -160,11 +160,4 @@ module.exports = function(grunt) {
     });
 
     grunt.registerTask('docs', ['docco']);
-
-
-
-    // grunt.registerTask('default', [
-    //         'connect:livereload',
-    //         'watch'
-    //     ]);
 };

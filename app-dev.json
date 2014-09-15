@@ -1,10 +1,12 @@
 {
     "env": "TearoutCache",
-    "desktop_core_url": "https://demoappdirectory.openf.in/desktop/desktopcore/2.0.7/index.html",
-    "desktop_controller_url": "https://demoappdirectory.openf.in/desktop/desktopcontroller/2.0.7/index.html",
+    "desktop_core_url": "http://local:9000/offline/core.html",
+    "desktop_controller_url": "http://local:9000/offline/controller/index.html",
+    "devtools_port": 9090,
+    "websocket_port": 9696,
     "startup_app": {
-        "name": "Tearout",
-        "uuid": "tearout-main",
+        "name": "Tearout-offline",
+        "uuid": "tearout-main-offline",
         "url": "http://local:9000/index.html",
         "autoShow": true,
         "resizable": false,
@@ -12,8 +14,7 @@
         "maxWidth": 600,
         "maxHeight": 1256,
         "width": 600,
-        "height": 1256,
-        "resizable": false  
+        "height": 1256
     },
     "runtime": {
         "arguments": "",
@@ -22,7 +23,7 @@
     "shortcut": {
         "company": "OpenFin",
         "description": "Tearout Example",
-        "name": "openfin-tearout",
-        "icon": "steeeeeeeeve"
+        "name": "openfin-tearout-offline",
+        "icon": "none"
     }
 }

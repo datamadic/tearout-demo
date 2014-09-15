@@ -28,12 +28,12 @@ var initDragAndDrop = function(config) {
             dropTarget: config.dropTarget || null,
             frame: config.frame || null
         },
-        // Here we want to be able to continue to recieve mouse move events 
+        // Here we want to be able to continue to receive mouse move events 
         // outside the window borders via 
         // [setCapture](https://developer.mozilla.org/en-US/docs/Web/API/Element.setCapture)
         dragTarget = config.element.setCapture ? config.element : document;
 
-    // This is the distance from where the mouse click occured to left 0 of the
+    // This is the distance from where the mouse click occurred to left 0 of the
     // element. We use this to place the tearout window exactly over the tearout
     // element   
     me.setOffsetX = function(x) {
@@ -63,7 +63,7 @@ var initDragAndDrop = function(config) {
         return me;
     };
 
-    // Make a call to setCapture on the element in order to be able to recieve 
+    // Make a call to setCapture on the element in order to be able to receive 
     // mousemove events outside of the main browser window 
     me.setElementCapture = function() {
         if (me.element.setCapture) {
@@ -109,7 +109,7 @@ var initDragAndDrop = function(config) {
         return me;
     };
 
-    // Grab the dom element back from the tearout and append its origional 
+    // Grab the dom element back from the tearout and append its original 
     // container 
     me.appendElementBackFromTearout = function() {
         me.dropTarget.appendChild(me.element);
@@ -154,7 +154,7 @@ var initDragAndDrop = function(config) {
     };
 
     // If the tearout is framed window, we do nothing when back over the drop 
-    // targert. If it is a frameless window we initiate the return sequence. 
+    // target. If it is a frameless window we initiate the return sequence. 
     // This function gets registered as a callback from the tearout window  
     me.dropCallback = function() {
         if (me.frame) {
@@ -164,7 +164,7 @@ var initDragAndDrop = function(config) {
     };
 
 
-    //	When an elemet is being dragged, do not allow background elements to be 
+    //	When an element is being dragged, do not allow background elements to be 
     //	selected. This prevents problems when dragging back in while the browser
     //	still thinks that the there is a focused/selected element 
     me.disableDocumentElementSelection = function() {
@@ -188,7 +188,7 @@ var initDragAndDrop = function(config) {
     // `handleMouseDown` is the function assigned to the native `mousedown` 
     // event on the element to be torn out. The param `e` is the native event 
     // passed in by the event listener. The steps taken are as follows:
-    // * Set the captupre on the element to be able know mouse position 
+    // * Set the capture on the element to be able know mouse position 
     // * Disable selection on the page not to select items while dragging 
     // * Set the X and Y offsets to better position the tearout window 
     // * Move the tearout window into position
@@ -224,7 +224,7 @@ var initDragAndDrop = function(config) {
     // the element to be torn out (or `document` if setCapture is not available 
     // on the desired tearout element). The param `e` is the native event passed
     // in by the event listener. If the `currentlyDragging` flag is true, 
-    // indicate that move event occured and move the tearout window 
+    // indicate that move event occurred and move the tearout window 
     me.handleMouseMove = function(e) {
 
         if (me.currentlyDragging) {
@@ -273,7 +273,7 @@ var createTearoutWindowConfig = function(frame) {
         'width': 210,
         'height': 210 + (frame ? 28 : 0),
         'autoShow': false,
-        'url': 'views/duplicate.html',
+        'url': 'views/tearout.html',
         'frame': frame || false,
         'resizable': false,
         'maximizable': false
