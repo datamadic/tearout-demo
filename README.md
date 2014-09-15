@@ -4,7 +4,7 @@ The OpenFin Runtime makes it possible to 'tear out' elements from an application
 
 ## Installing And Running The Demo
 
-Click [here](https://dl.openfin.co/services/download?fileName=tearout-demo-installer&config=https://demoappdirectory.openf.in/desktop/deploy/tearout-demo/start.json) to install a hosted copy of the demo.
+Click [here](https://dl.openfin.co/services/download?fileName=tearout-demo-installer&config=https://demoappdirectory.openf.in/desktop/deploy/tearout-demo/app.json) to install a hosted copy of the demo.
 
 If you would like to play with the code a bit:
 * Download/Fork the repository 
