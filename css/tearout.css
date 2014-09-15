@@ -23,4 +23,9 @@ body{
 .gold {
 	background-color:  gold;
 }
+.openfin-gallery {
+	color: blue;
+	text-decoration: underline;
+	cursor: pointer;
+}
 
