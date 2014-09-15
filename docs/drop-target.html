@@ -51,40 +51,180 @@
               
             </div>
             
-            <div class="content"><div class='highlight'><pre><span class="hljs-comment">/*global fin, geometry*/</span>
+            <div class="content"><div class='highlight'><pre><span class="hljs-comment">/*global fin, geometry*/</span></pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-2">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-2">&#182;</a>
+              </div>
+              <p>Exposes an API that the parent window uses to set dragging state and return 
+callbacks </p>
 
-(<span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">()</span> </span>{
-<span class="hljs-pi">    'use strict'</span>;
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>(<span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">()</span> </span>{
+<span class="hljs-pi">    'use strict'</span>;</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-3">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-3">&#182;</a>
+              </div>
+              <p>The API object to be exposed </p>
 
-    <span class="hljs-keyword">var</span> dropTargetAPI = {};
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    <span class="hljs-keyword">var</span> dropTargetAPI = {};</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-4">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-4">&#182;</a>
+              </div>
+              <p>When moving, this will be the element in the parent that is checked for 
+position to determine whether or not to fire the dropCallback</p>
 
-    <span class="hljs-keyword">var</span> dropTarget,
-        dropCallback = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">()</span> </span>{},
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    <span class="hljs-keyword">var</span> dropTarget,</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-5">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-5">&#182;</a>
+              </div>
+              <p>Initially setup the callbacks as noops</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        dropCallback = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">()</span> </span>{},
         closeCallback = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">()</span> </span>{},
-        initialDragOver = <span class="hljs-literal">false</span>;
+        initialDragOver = <span class="hljs-literal">false</span>;</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-6">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-6">&#182;</a>
+              </div>
+              <p>Allow the parent to set the drop target </p>
 
-    dropTargetAPI.setDropTarget = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">(element)</span> </span>{
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    dropTargetAPI.setDropTarget = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">(element)</span> </span>{
         dropTarget = element;
-    };
-    dropTargetAPI.setInitialDragOver = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">(state)</span> </span>{
-        initialDragOver = state;
-    };
-    dropTargetAPI.setDropCallback = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">(callback)</span> </span>{
-        dropCallback = callback;
-    };
-    dropTargetAPI.setCloseCallback = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">(callback)</span> </span>{
-        closeCallback = callback;
-    };
+    };</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-7">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-7">&#182;</a>
+              </div>
+              <p>Allow the parent to set the initial dragover state (initially false, this 
+gets set to false on the drop or close callback)</p>
 
-    <span class="hljs-keyword">var</span> getWindowPosition = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">(windowElement)</span> </span>{
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    dropTargetAPI.setInitialDragOver = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">(state)</span> </span>{
+        initialDragOver = state;
+    };</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-8">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-8">&#182;</a>
+              </div>
+              <p>Allow the parent to set the drop callback to be executed on drop</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    dropTargetAPI.setDropCallback = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">(callback)</span> </span>{
+        dropCallback = callback;
+    };</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-9">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-9">&#182;</a>
+              </div>
+              <p>Allow the parent to set the close callback to be executed on the OpenFin
+<code>close-requested</code> event </p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    dropTargetAPI.setCloseCallback = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">(callback)</span> </span>{
+        closeCallback = callback;
+    };</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-10">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-10">&#182;</a>
+              </div>
+              <p>Convenience funciton that grabs the height, width, top, and left off 
+a window object  </p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    <span class="hljs-keyword">var</span> getWindowPosition = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">(windowElement)</span> </span>{
         <span class="hljs-keyword">return</span> {
             height: windowElement.outerHeight,
             width: windowElement.outerWidth,
             top: windowElement.screenY,
             left: windowElement.screenX
         };
-    };
-    <span class="hljs-keyword">var</span> elementScreenPosition = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">(windowElement, element)</span> </span>{
+    };</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-11">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-11">&#182;</a>
+              </div>
+              <p>Calculate the screen position of an element </p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    <span class="hljs-keyword">var</span> elementScreenPosition = <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">(windowElement, element)</span> </span>{
         <span class="hljs-keyword">var</span> relativeElementPosition = element.getBoundingClientRect();
         <span class="hljs-keyword">return</span> {
             height: relativeElementPosition.height,
@@ -95,10 +235,40 @@
     };
 
     fin.desktop.main(<span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">()</span> </span>{
-        <span class="hljs-keyword">var</span> currentWindow = fin.desktop.Window.getCurrent();
+        <span class="hljs-keyword">var</span> currentWindow = fin.desktop.Window.getCurrent();</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-12">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-12">&#182;</a>
+              </div>
+              <p>On the <code>bounds-changing</code> event check to see if you are over a 
+potential drop target. If you are and and it is not the initial drag
+out, fire the dropCallBack</p>
 
-        currentWindow.addEventListener(<span class="hljs-string">'bounds-changing'</span>, <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">()</span> </span>{
-            <span class="hljs-keyword">var</span> overDropTarget = geometry.rectangle(getWindowPosition(<span class="hljs-built_in">window</span>))
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        currentWindow.addEventListener(<span class="hljs-string">'bounds-changing'</span>, <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">()</span> </span>{</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-13">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-13">&#182;</a>
+              </div>
+              <p>Check if you are over a drop target by seeing if the tearout 
+rectangle intersects the drop target  </p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>            <span class="hljs-keyword">var</span> overDropTarget = geometry.rectangle(getWindowPosition(<span class="hljs-built_in">window</span>))
                 .intersects(
                     geometry.rectangle(
                         elementScreenPosition(
@@ -107,13 +277,23 @@
             <span class="hljs-keyword">if</span> (overDropTarget &amp;&amp; initialDragOver) {
                 dropCallback();
             }
-        });
+        });</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-14">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-14">&#182;</a>
+              </div>
+              <p>When the user clicks the close button, instead of terminating the 
+window, we call the registerd close callback and hide it</p>
 
-        <span class="hljs-comment">/* 
-        	when the user clicks the close button, instead of terminating the 
-        	window, we call the registerd close call back and hide it
-        */</span>
-        currentWindow.addEventListener(<span class="hljs-string">'close-requested'</span>, <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">()</span> </span>{
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        currentWindow.addEventListener(<span class="hljs-string">'close-requested'</span>, <span class="hljs-function"><span class="hljs-keyword">function</span><span class="hljs-params">()</span> </span>{
             closeCallback();
             currentWindow.hide();
         });

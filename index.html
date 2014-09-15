@@ -31,13 +31,19 @@
 			the tearout window. The only caveate to this method is that once the 
 			mouse leaves the bounds of the parent window you no longer are able to set 
 			<code>event.preventDefault()</code> on a dragover event. Unfortunately Windows 
-			will show the 'not-allowed' cursor even though for our purposes we really can drop 
+			will show the 'not-allowed' cursor in this case even though for our purposes we really can drop 
 			anywhere. To mitigate this, you can move an OpenFin window, with opacity set to .01, programmatically
 			to always be behind the mouse. In so doing you are able to have the correct cursor prompt. 
-			This is how our <span class="openfin-gallery">chat app</span> handles tearouts. 
+			This is how our <span class="browser-link" destination="http://openfin.co/app-gallery.html">chat app</span> handles tearouts. 
 		</p>
 		
-		
+		<h1>A small Demo</h1>
+		<p>
+			You can browse the annotated source for the parent window  
+			<span class="browser-link" destination="http://localhost:9000/docs/tearout.html">here</span>,
+			and the for the drop target 
+			<span class="browser-link" destination="http://localhost:9000/docs/drop-target.html">here</span>.
+		</p>
 		<h2>Drag Out To Frame</h2>
 
 		<p>
@@ -65,8 +71,8 @@
 
 		<h3>Keep In Mind</h3>
 		<p>
-			Applications such as our <span class="openfin-gallery">chat app</span> and d:code:it's 
-			<span class="openfin-gallery">MarketStack</span> create a tearout experience without actually 
+			Applications such as our <span class="browser-link" destination="http://openfin.co/app-gallery.html">chat app</span> and d:code:it's 
+			<span class="browser-link" destination="http://openfin.co/app-gallery.html">MarketStack</span> create a tearout experience without actually 
 			moving DOM from one one window to another. Before transferring DOM elements from one window 
 			to another, decide if this is the best experience for the user. 
 		</p>
